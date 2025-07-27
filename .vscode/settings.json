@@ -1,0 +1,14 @@
+{
+  "python.formatting.provider": "none",
+  "[python]": {
+    "editor.defaultFormatter": "charliermarsh.ruff",
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+      "source.fixAll.ruff": "explicit",
+      "source.organizeImports.ruff": "explicit"
+    }
+  },
+  "python.linting.enabled": false,
+  "ruff.format.args": ["--config", "pyproject.toml"],
+  "ruff.lint.args": ["--config", "pyproject.toml"]
+}

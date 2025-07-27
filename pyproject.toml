@@ -1,0 +1,195 @@
+[project]
+name = "llmbot"
+version = "0.0.0"
+description = "LLM Gateway for Discord - Connect Discord users to LLMs via OpenWebUI"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "GPL-3.0-or-later"
+authors = [{ name = "Grayson Head", email = "grayson@graysonhead.net" }]
+maintainers = [{ name = "Grayson Head", email = "grayson@graysonhead.net" }]
+keywords = ["discord", "llm", "gateway", "openwebui", "chatbot"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: No Input/Output (Daemon)",
+  "Intended Audience :: End Users/Desktop",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Communications :: Chat",
+  "Topic :: Internet :: WWW/HTTP :: Dynamic Content",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "Typing :: Typed",
+]
+
+dependencies = ["click", "openai"]
+
+[project.optional-dependencies]
+
+test = ["mypy", "nox", "pytest", "ruff"]
+
+#####################
+## PROJECT SCRIPTS ##
+#####################
+
+[project.scripts]
+
+llmbot = "llmbot.cli:main"
+
+################################
+## BUILD SYSTEM CONFIGURATION ##
+################################
+
+[build-system]
+
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+##############################
+## SETUPTOOLS CONFIGURATION ##
+##############################
+
+[tool.setuptools.packages.find]
+
+where = ["."]
+include = ["llmbot*"]
+exclude = ["tests*"]
+
+[tool.setuptools.package-data]
+
+llmbot = ["resources/*"]
+
+##########################
+## PYTEST CONFIGURATION ##
+##########################
+
+[tool.pytest.ini_options]
+
+addopts = ["--doctest-modules"]
+
+testpaths = ["tests", "llmbot"]
+
+########################
+## RUFF CONFIGURATION ##
+########################
+
+[tool.ruff]
+
+## Set the required version of ruff:
+required-version = ">=0.11.7"
+
+## Exclude directories and files from ruff runs:
+exclude = [
+  ## Common excludes:
+  ".bzr",
+  ".direnv",
+  ".eggs",
+  ".git",
+  ".git-rewrite",
+  ".hg",
+  ".ipynb_checkpoints",
+  ".mypy_cache",
+  ".nox",
+  ".pants.d",
+  ".pyenv",
+  ".pytest_cache",
+  ".pytype",
+  ".ruff_cache",
+  ".svn",
+  ".tox",
+  ".venv",
+  ".vscode",
+  "__pypackages__",
+  "_build",
+  "buck-out",
+  "build",
+  "dist",
+  "node_modules",
+  "site-packages",
+  "venv",
+]
+
+## Make the default fix behaviour `false`:
+fix = false
+
+[tool.ruff.format]
+
+docstring-code-format = true
+
+[tool.ruff.lint]
+
+## Enable specific rules or categories:
+select = [
+  "AIR",   ## Airflow
+  "ERA",   ## eradicate
+  "FAST",  ## FastAPI
+  "YTT",   ## flake8-2020
+  "ANN",   ## flake8-annotations
+  "ASYNC", ## flake8-async
+  "S",     ## flake8-bandit
+  "BLE",   ## flake8-blind-except
+  "FBT",   ## flake8-boolean-trap
+  "B",     ## flake8-bugbear
+  "A",     ## flake8-builtins
+  "COM",   ## flake8-commas
+  "C4",    ## flake8-comprehensions
+  "CPY",   ## flake8-copyright
+  "DTZ",   ## flake8-datetimez
+  "T10",   ## flake8-debugger
+  "DJ",    ## flake8-django
+  "EM",    ## flake8-errmsg
+  "EXE",   ## flake8-executable
+  "FIX",   ## flake8-fixme
+  "FA",    ## flake8-future-annotations
+  "INT",   ## flake8-gettext
+  "ISC",   ## flake8-implicit-str-concat
+  "ICN",   ## flake8-import-conventions
+  "LOG",   ## flake8-logging
+  "G",     ## flake8-logging-format
+  "INP",   ## flake8-no-pep420
+  "PIE",   ## flake8-pie
+  "T20",   ## flake8-print
+  "PYI",   ## flake8-pyi
+  "PT",    ## flake8-pytest-style
+  "Q",     ## flake8-quotes
+  "RSE",   ## flake8-raise
+  "RET",   ## flake8-return
+  "SLF",   ## flake8-self
+  "SIM",   ## flake8-simplify
+  "SLOT",  ## flake8-slots
+  "TID",   ## flake8-tidy-imports
+  "TD",    ## flake8-todos
+  "TC",    ## flake8-type-checking
+  "ARG",   ## flake8-unused-arguments
+  "PTH",   ## flake8-use-pathlib
+  "FLY",   ## flynt
+  "I",     ## isort
+  "C90",   ## mccabe
+  "NPY",   ## NumPy-specific rules
+  "PD",    ## pandas-vet
+  "N",     ## pep8-naming
+  "PERF",  ## Perflint
+  "E",     ## pycodestyle -> Error
+  "W",     ## pycodestyle -> Warning
+  "DOC",   ## pydoclint
+  "D",     ## pydocstyle
+  "F",     ## Pyflakes
+  "PGH",   ## pygrep-hooks
+  "PLC",   ## Pylint -> Convention
+  "PLE",   ## Pylint -> Error
+  "PLR",   ## Pylint -> Refactor
+  "PLW",   ## Pylint -> Warning
+  "UP",    ## pyupgrade
+  "FURB",  ## refurb
+  "RUF",   ## Ruff-specific rules
+  "TRY",   ## tryceratops
+]
+
+## Ignore specific rules or categories:
+ignore = ["COM812"]
+
+[tool.ruff.lint.pydocstyle]
+
+convention = "pep257"
