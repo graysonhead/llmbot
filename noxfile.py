@@ -14,7 +14,7 @@ A few examples for invoking `nox`:
     nox -k "not mypy and not pytest"
 """
 
-import nox
+import nox  # type: ignore[import-not-found]
 
 #: Files and directories of interest.
 paths = [

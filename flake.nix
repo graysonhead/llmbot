@@ -60,6 +60,7 @@
           ## Specify production dependencies:
           propagatedBuildInputs = [
             pkgs.python3Packages.click
+            pkgs.python3Packages.discordpy
             pkgs.python3Packages.openai
           ];
         };
