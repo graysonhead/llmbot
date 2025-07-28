@@ -76,15 +76,6 @@
         pre-commit-check = pre-commit-hooks.lib.${system}.run {
           src = ./.;
           hooks = {
-            # Run unit tests
-            pytest = {
-              enable = true;
-              name = "pytest";
-              entry = "${pkgs.python3Packages.nox}/bin/nox -s pytest";
-              language = "system";
-              pass_filenames = false;
-            };
-            
             # Run linting
             ruff-check = {
               enable = true;

@@ -87,9 +87,9 @@ class LLMBot(commands.Bot):
             query,
         )
 
-        try:
-            # Show typing indicator
-            async with message.channel.typing():
+        # Show typing indicator for the entire process
+        async with message.channel.typing():
+            try:
                 # Add user message to context
                 self.channel_contexts[channel_id].append(
                     {
@@ -137,14 +137,14 @@ class LLMBot(commands.Bot):
                 else:
                     await message.reply(response_text)
 
-        except Exception as e:
-            error_msg = f"Error processing your request: {e}"
-            logger.exception(
-                "Query failed - Channel: %s, User: %s",
-                channel_id,
-                user_name,
-            )
-            await message.reply(error_msg)
+            except Exception as e:
+                error_msg = f"Error processing your request: {e}"
+                logger.exception(
+                    "Query failed - Channel: %s, User: %s",
+                    channel_id,
+                    user_name,
+                )
+                await message.reply(error_msg)
 
     @commands.command(name="clear_context")  # type: ignore[type-var]
     async def clear_context(self, ctx: commands.Context) -> None:
