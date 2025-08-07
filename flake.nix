@@ -8,6 +8,11 @@
   };
 
   outputs = { self, nixpkgs, flake-utils, pre-commit-hooks, ... }:
+    {
+      # Export the NixOS module
+      nixosModules.default = import ./module.nix;
+      nixosModule = self.nixosModules.default;
+    } //
     flake-utils.lib.eachDefaultSystem (system:
       let
         ## Import nixpkgs:

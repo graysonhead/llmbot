@@ -60,7 +60,13 @@ def discord(server_url: str, model: str, context_limit: int, timeout: float) -> 
     click.echo("Starting Discord bot...")
     try:
         asyncio.run(
-            start_discord_bot(discord_token, server_url, model, context_limit, timeout)
+            start_discord_bot(
+                discord_token,
+                server_url,
+                model=model,
+                context_limit=context_limit,
+                request_timeout=timeout,
+            )
         )
     except KeyboardInterrupt:
         click.echo("\nBot stopped by user")
