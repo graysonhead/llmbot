@@ -4,13 +4,11 @@ import logging
 import os
 import re
 from collections import defaultdict, deque
+from typing import Any
 
 import discord  # type: ignore[import-not-found]
 from discord.ext import commands  # type: ignore[import-not-found]
-from openai import OpenAI  # type: ignore[import-not-found]
-from openai.types.chat import (
-    ChatCompletionMessageParam,  # type: ignore[import-not-found]
-)
+from openwebui_chat_client import OpenWebUIClient  # type: ignore[import-untyped]
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -55,19 +53,19 @@ class LLMBot(commands.Bot):
             msg = "OPENWEBUI_API_KEY environment variable not set"
             raise ValueError(msg)
 
-        self.openai_client = OpenAI(
-            base_url=server_url, api_key=self.api_key, timeout=self.request_timeout
+        self.openwebui_client = OpenWebUIClient(
+            base_url=server_url, token=self.api_key, default_model_id=self.model
         )
 
         # Store conversation history per channel
         # Each channel gets a deque with limited size to maintain context window
-        self.channel_contexts: dict[int, deque[ChatCompletionMessageParam]] = (
-            defaultdict(lambda: self._create_new_context())
+        self.channel_contexts: dict[int, deque[dict[str, Any]]] = defaultdict(
+            lambda: self._create_new_context()
         )
 
-    def _create_new_context(self) -> deque[ChatCompletionMessageParam]:
+    def _create_new_context(self) -> deque[dict[str, Any]]:
         """Create a new context deque with system message pre-populated."""
-        context: deque[ChatCompletionMessageParam] = deque(maxlen=self.context_limit)
+        context: deque[dict[str, Any]] = deque(maxlen=self.context_limit)
         context.append({"role": "system", "content": self.system_message})
         return context
 
@@ -136,14 +134,34 @@ class LLMBot(commands.Bot):
                     }
                 )
 
-                # Build messages with context
-                messages = list(self.channel_contexts[channel_id])
+                # Build context for the query
+                context_messages = list(self.channel_contexts[channel_id])
 
-                response = self.openai_client.chat.completions.create(
-                    model=model_to_use, messages=messages
+                # Create a formatted context string for openwebui-chat-client
+                context_str = "\n".join(
+                    [
+                        f"{msg['role']}: {msg['content']}"
+                        for msg in context_messages[
+                            1:
+                        ]  # Skip system message for context
+                    ]
                 )
 
-                response_text = response.choices[0].message.content
+                # Combine context with current query
+                full_query = (
+                    f"Context:\n{context_str}\n\nCurrent question: {cleaned_query}"
+                    if context_str
+                    else cleaned_query
+                )
+
+                # Use openwebui-chat-client
+                result = self.openwebui_client.chat(
+                    question=full_query,
+                    model_id=model_to_use,
+                    chat_title=f"discord-channel-{channel_id}",
+                )
+
+                response_text = result.get("response") if result else None
                 if not response_text:
                     response_text = "No response received from the model."
 

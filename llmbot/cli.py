@@ -4,7 +4,7 @@ import asyncio
 import os
 
 import click  # type: ignore[import-not-found]
-from openai import OpenAI  # type: ignore[import-not-found]
+from openwebui_chat_client import OpenWebUIClient  # type: ignore[import-untyped]
 
 from .discord_bot import start_discord_bot
 
@@ -17,9 +17,8 @@ def main() -> None:
 @main.command()
 @click.option("--server-url", required=True, help="OpenWebUI server URL")
 @click.option("--model", default="llama3.1:8b", help="Model to use for the query")
-@click.option("--timeout", default=15.0, help="Request timeout in seconds")
 @click.argument("query")
-def query(server_url: str, model: str, timeout: float, query: str) -> None:
+def query(server_url: str, model: str, query: str) -> None:
     """Send a query to OpenWebUI and print the response."""
     api_key = os.getenv("OPENWEBUI_API_KEY")
     if not api_key:
@@ -27,13 +26,12 @@ def query(server_url: str, model: str, timeout: float, query: str) -> None:
         raise click.Abort
 
     try:
-        client = OpenAI(base_url=server_url, api_key=api_key, timeout=timeout)
-        response = client.chat.completions.create(
-            model=model, messages=[{"role": "user", "content": query}]
+        client = OpenWebUIClient(
+            base_url=server_url, token=api_key, default_model_id=model
         )
-        content = response.choices[0].message.content
-        if content:
-            click.echo(content)
+        result = client.chat(question=query)
+        if result and result.get("response"):
+            click.echo(result["response"])
         else:
             click.echo("No response received from the model.")
     except Exception as e:

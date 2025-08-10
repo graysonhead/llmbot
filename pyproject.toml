@@ -24,7 +24,7 @@ classifiers = [
   "Typing :: Typed",
 ]
 
-dependencies = ["click", "discord.py", "openai"]
+dependencies = ["click", "discord.py", "openwebui-chat-client"]
 
 [project.optional-dependencies]
 

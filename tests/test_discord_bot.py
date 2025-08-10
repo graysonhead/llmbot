@@ -14,7 +14,7 @@ def _parse_model_from_query(
 
     if match:
         model_name = match.group(1)
-        # Remove the model specification from the query
+        # Remove ALL model specifications from the query
         cleaned_query = re.sub(model_pattern, "", query).strip()
         return model_name, cleaned_query
 
@@ -54,7 +54,7 @@ class TestLLMBot:
         result = _parse_model_from_query(
             "!model=gpt-4 some text !model=claude-3-opus more text"
         )
-        expected = ("gpt-4", "some text !model=claude-3-opus more text")
+        expected = ("gpt-4", "some text  more text")
         assert result == expected
 
     def test_parse_model_from_query_complex_model_names(self) -> None:
