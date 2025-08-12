@@ -98,9 +98,10 @@
           '';
 
           ## Specify production dependencies:
-          propagatedBuildInputs = [
-            pkgs.python3Packages.click
-            pkgs.python3Packages.discordpy
+          propagatedBuildInputs = with pkgs.python3Packages; [
+            click
+            discordpy
+          ] ++ [
             openwebui-chat-client
           ];
         };
