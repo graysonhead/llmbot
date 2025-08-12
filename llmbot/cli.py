@@ -4,7 +4,9 @@ import asyncio
 import os
 
 import click  # type: ignore[import-not-found]
-from openwebui_chat_client import OpenWebUIClient  # type: ignore[import-untyped]
+from openwebui_chat_client import (  # type: ignore[import-not-found,import-untyped]
+    OpenWebUIClient,
+)
 
 from .discord_bot import start_discord_bot
 
@@ -42,13 +44,8 @@ def query(server_url: str, model: str, query: str) -> None:
 @main.command()
 @click.option("--server-url", required=True, help="OpenWebUI server URL")
 @click.option("--model", default="llama3.1:8b", help="Model to use for queries")
-@click.option(
-    "--context-limit",
-    default=10,
-    help="Number of messages to keep in context per channel",
-)
 @click.option("--timeout", default=15.0, help="Request timeout in seconds")
-def discord(server_url: str, model: str, context_limit: int, timeout: float) -> None:
+def discord(server_url: str, model: str, timeout: float) -> None:
     """Start the Discord bot."""
     discord_token = os.getenv("DISCORD_BOT_TOKEN")
     if not discord_token:
@@ -62,7 +59,6 @@ def discord(server_url: str, model: str, context_limit: int, timeout: float) -> 
                 discord_token,
                 server_url,
                 model=model,
-                context_limit=context_limit,
                 request_timeout=timeout,
             )
         )

@@ -69,7 +69,7 @@ llmbot = ["resources/*"]
 
 addopts = ["--doctest-modules"]
 
-testpaths = ["tests", "llmbot"]
+testpaths = ["tests"]
 
 ########################
 ## RUFF CONFIGURATION ##

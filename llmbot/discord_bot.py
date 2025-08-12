@@ -3,12 +3,12 @@
 import logging
 import os
 import re
-from collections import defaultdict, deque
-from typing import Any
 
 import discord  # type: ignore[import-not-found]
 from discord.ext import commands  # type: ignore[import-not-found]
-from openwebui_chat_client import OpenWebUIClient  # type: ignore[import-untyped]
+from openwebui_chat_client import (  # type: ignore[import-not-found,import-untyped]
+    OpenWebUIClient,
+)
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -19,13 +19,12 @@ logging.basicConfig(
 
 
 class LLMBot(commands.Bot):
-    """Discord bot that forwards messages to OpenWebUI backend with context."""
+    """Discord bot that forwards messages to OpenWebUI backend."""
 
     def __init__(
         self,
         server_url: str,
         model: str = "llama3.1:8b",
-        context_limit: int = 10,
         request_timeout: float = 15.0,
         system_message: str | None = None,
     ) -> None:
@@ -36,7 +35,6 @@ class LLMBot(commands.Bot):
 
         self.server_url = server_url
         self.model = model
-        self.context_limit = context_limit
         self.request_timeout = request_timeout
         self.api_key = os.getenv("OPENWEBUI_API_KEY")
         self.system_message = system_message or (
@@ -56,18 +54,6 @@ class LLMBot(commands.Bot):
         self.openwebui_client = OpenWebUIClient(
             base_url=server_url, token=self.api_key, default_model_id=self.model
         )
-
-        # Store conversation history per channel
-        # Each channel gets a deque with limited size to maintain context window
-        self.channel_contexts: dict[int, deque[dict[str, Any]]] = defaultdict(
-            lambda: self._create_new_context()
-        )
-
-    def _create_new_context(self) -> deque[dict[str, Any]]:
-        """Create a new context deque with system message pre-populated."""
-        context: deque[dict[str, Any]] = deque(maxlen=self.context_limit)
-        context.append({"role": "system", "content": self.system_message})
-        return context
 
     def _parse_model_from_query(self, query: str) -> tuple[str, str]:
         """Parse model specification from query and return (model, cleaned_query)."""
@@ -94,8 +80,16 @@ class LLMBot(commands.Bot):
         if message.author == self.user:
             return
 
-        # Check if bot is mentioned
-        if self.user and self.user.mentioned_in(message):
+        # Check if this is a DM with exactly one other user
+        is_dm = isinstance(message.channel, discord.DMChannel)
+
+        if is_dm:
+            # In DMs, respond to any message (no mention required)
+            content = message.content.strip()
+            if content:
+                await self.handle_llm_query(message, content)
+        elif self.user and self.user.mentioned_in(message):
+            # In group channels/servers, only respond when mentioned
             # Remove the mention from the message content
             content = message.content
             mention_pattern = rf"<@!?{self.user.id}>"
@@ -108,7 +102,7 @@ class LLMBot(commands.Bot):
         await self.process_commands(message)
 
     async def handle_llm_query(self, message: discord.Message, query: str) -> None:
-        """Handle LLM query and respond with channel context."""
+        """Handle LLM query and respond."""
         channel_id = message.channel.id
         user_name = message.author.display_name
 
@@ -116,8 +110,7 @@ class LLMBot(commands.Bot):
         model_to_use, cleaned_query = self._parse_model_from_query(query)
 
         logger.info(
-            "Query received - Channel: %s, User: %s, Model: %s, Query: %s",
-            channel_id,
+            "Query received - User: %s, Model: %s, Query: %s",
             user_name,
             model_to_use,
             cleaned_query,
@@ -126,37 +119,12 @@ class LLMBot(commands.Bot):
         # Show typing indicator for the entire process
         async with message.channel.typing():
             try:
-                # Add user message to context (use cleaned query)
-                self.channel_contexts[channel_id].append(
-                    {
-                        "role": "user",
-                        "content": f"{user_name}: {cleaned_query}",
-                    }
-                )
-
-                # Build context for the query
-                context_messages = list(self.channel_contexts[channel_id])
-
-                # Create a formatted context string for openwebui-chat-client
-                context_str = "\n".join(
-                    [
-                        f"{msg['role']}: {msg['content']}"
-                        for msg in context_messages[
-                            1:
-                        ]  # Skip system message for context
-                    ]
-                )
-
-                # Combine context with current query
-                full_query = (
-                    f"Context:\n{context_str}\n\nCurrent question: {cleaned_query}"
-                    if context_str
-                    else cleaned_query
-                )
+                # Format query with user name for identification
+                formatted_query = f"{user_name}: {cleaned_query}"
 
                 # Use openwebui-chat-client
                 result = self.openwebui_client.chat(
-                    question=full_query,
+                    question=formatted_query,
                     model_id=model_to_use,
                     chat_title=f"discord-channel-{channel_id}",
                 )
@@ -165,17 +133,8 @@ class LLMBot(commands.Bot):
                 if not response_text:
                     response_text = "No response received from the model."
 
-                # Add bot response to context
-                self.channel_contexts[channel_id].append(
-                    {
-                        "role": "assistant",
-                        "content": response_text,
-                    }
-                )
-
                 logger.info(
-                    "Query successful - Channel: %s, User: %s, Response: %d chars",
-                    channel_id,
+                    "Query successful - User: %s, Response: %d chars",
                     user_name,
                     len(response_text),
                 )
@@ -196,36 +155,20 @@ class LLMBot(commands.Bot):
             except Exception as e:
                 error_msg = f"Error processing your request: {e}"
                 logger.exception(
-                    "Query failed - Channel: %s, User: %s",
-                    channel_id,
+                    "Query failed - User: %s",
                     user_name,
                 )
                 await message.reply(error_msg)
 
-    @commands.command(name="clear_context")  # type: ignore[type-var]
-    async def clear_context(self, ctx: commands.Context) -> None:
-        """Clear the conversation context for this channel."""
-        channel_id = ctx.channel.id
-        self.channel_contexts[channel_id] = self._create_new_context()
-        await ctx.send("✅ Channel context cleared!")
 
-    @commands.command(name="context_size")  # type: ignore[type-var]
-    async def context_size(self, ctx: commands.Context) -> None:
-        """Show current context size for this channel."""
-        channel_id = ctx.channel.id
-        size = len(self.channel_contexts[channel_id])
-        await ctx.send(f"📊 Current context size: {size}/{self.context_limit} messages")
-
-
-async def start_discord_bot(  # noqa: PLR0913
+async def start_discord_bot(
     token: str,
     server_url: str,
     *,
     model: str = "llama3.1:8b",
-    context_limit: int = 10,
     request_timeout: float = 15.0,
     system_message: str | None = None,
 ) -> None:
     """Start the Discord bot."""
-    bot = LLMBot(server_url, model, context_limit, request_timeout, system_message)
+    bot = LLMBot(server_url, model, request_timeout, system_message)
     await bot.start(token)
