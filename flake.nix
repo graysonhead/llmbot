@@ -118,6 +118,7 @@
         packages = {
           "${project.name}" = package;
           default = self.packages.${system}.${project.name};
+          openwebui-chat-client = openwebui-chat-client;
         };
 
         ## Project development shell output:

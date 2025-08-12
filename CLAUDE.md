@@ -24,9 +24,12 @@ nix develop
 - Linting: `nox -s check`
 
 ### Code Formatting
+- Fix everything automatically: `nox -s fix`
 - Format code: `nox -s format -- --fix`
 - Check formatting: `nox -s format`
 - Format TOML files: `nox -s taplo -- --fix`
+
+**IMPORTANT**: Always run `nox -s fix` after major refactoring to maintain code quality.
 
 ### Building and Running
 - Build package: `nix build`
