@@ -4,10 +4,9 @@
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
-    pre-commit-hooks.url = "github:cachix/pre-commit-hooks.nix";
   };
 
-  outputs = { self, nixpkgs, flake-utils, pre-commit-hooks, ... }:
+  outputs = { self, nixpkgs, flake-utils, ... }:
     {
       # Export the NixOS module
       nixosModules.default = import ./module.nix;
@@ -26,13 +25,13 @@
 
         ## Create openwebui-chat-client package:
         openwebui-chat-client = pkgs.python3Packages.buildPythonPackage rec {
-          pname = "openwebui_chat_client";
-          version = "0.1.15";
-          format = "pyproject";
+          pname = "openwebui-chat-client";
+          version = "0.1.16";
+          format = "wheel";
 
-          src = pkgs.python3Packages.fetchPypi {
-            inherit pname version;
-            sha256 = "330ea41d58db1c1f9e018fb576287c1e84ee3945cc32c1f6c81dafadb97e0bf5";
+          src = pkgs.fetchurl {
+            url = "https://files.pythonhosted.org/packages/15/b6/6196b4a3eb551ae6a3fe580cac3b1c16bb229530309165c73a449c303a32/openwebui_chat_client-0.1.16-py3-none-any.whl";
+            sha256 = "sha256-gJNIBk50bhdpVWRJmENfxdpoz3z2BDfUioyLBGrzRko=";
           };
 
           build-system = with pkgs.python3Packages; [
@@ -113,39 +112,6 @@
           root = "$PWD";
         };
 
-        ## Configure pre-commit hooks:
-        pre-commit-check = pre-commit-hooks.lib.${system}.run {
-          src = ./.;
-          hooks = {
-            # Run linting
-            ruff-check = {
-              enable = true;
-              name = "ruff-check";
-              entry = "${pkgs.python3Packages.nox}/bin/nox -s check";
-              language = "system";
-              pass_filenames = false;
-            };
-            
-            # Run formatting
-            ruff-format = {
-              enable = true;
-              name = "ruff-format";
-              entry = "${pkgs.python3Packages.nox}/bin/nox -s format -- --fix";
-              language = "system";
-              pass_filenames = false;
-            };
-            
-            # Format TOML files
-            taplo-format = {
-              enable = true;
-              name = "taplo-format";
-              entry = "${pkgs.python3Packages.nox}/bin/nox -s taplo -- --fix";
-              language = "system";
-              files = "\\.toml$";
-              pass_filenames = false;
-            };
-          };
-        };
       in
       {
         ## Project packages output:
@@ -157,7 +123,6 @@
         ## Project development shell output:
         devShells = {
           default = pkgs.mkShell {
-            inherit (pre-commit-check) shellHook;
             inputsFrom = [
               package
             ];
@@ -187,7 +152,7 @@
               pkgs.python3Packages.pylsp-mypy
               pkgs.python3Packages.pylsp-rope
               pkgs.python3Packages.python-lsp-ruff
-            ] ++ pre-commit-check.enabledPackages;
+            ];
           };
         };
       });
