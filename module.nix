@@ -162,12 +162,10 @@ in
 
       script = let
         args = [
-          "--ollama-host=${cfg.ollamaHost}"
+          "--host=${cfg.ollamaHost}"
           "--model=${cfg.model}"
           "--timeout=${toString cfg.requestTimeout}"
           "--searxng-url=${cfg.searxngUrl}"
-        ] ++ optionals (cfg.systemMessage != null) [
-          "--system-message=${cfg.systemMessage}"
         ] ++ optionals (cfg.systemMessageFile != null) [
           "--system-message-file=${cfg.systemMessageFile}"
         ];
