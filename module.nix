@@ -38,28 +38,17 @@ in
       default = null;
     };
 
-    openwebuiApiKey = mkOption {
-      type = types.str;
-      description = "OpenWebUI API key. Consider using openwebuiApiKeyFile for better security.";
-      default = "";
-    };
-
-    openwebuiApiKeyFile = mkOption {
-      type = types.nullOr types.path;
-      description = "Path to file containing OpenWebUI API key.";
-      default = null;
-    };
-
     environmentFile = mkOption {
       type = types.nullOr types.path;
-      description = "Path to environment file containing DISCORD_BOT_TOKEN and OPENWEBUI_API_KEY variables.";
+      description = "Path to environment file containing DISCORD_BOT_TOKEN variable.";
       default = null;
     };
 
-    serverUrl = mkOption {
+    ollamaHost = mkOption {
       type = types.str;
-      description = "OpenWebUI server URL.";
-      example = "http://localhost:11434/v1";
+      description = "Ollama server host URL.";
+      default = "http://localhost:11434";
+      example = "http://localhost:11434";
     };
 
     model = mkOption {
@@ -78,6 +67,12 @@ in
       type = types.str;
       description = "SearXNG instance URL for web search functionality.";
       default = "http://localhost:8080/search";
+    };
+
+    systemMessage = mkOption {
+      type = types.nullOr types.str;
+      description = "Additional system message content to append to the default system message.";
+      default = null;
     };
 
     systemMessageFile = mkOption {
@@ -110,10 +105,6 @@ in
       {
         assertion = cfg.discordToken != "" || cfg.discordTokenFile != null || cfg.environmentFile != null;
         message = "services.llmbot: either discordToken, discordTokenFile, or environmentFile must be set";
-      }
-      {
-        assertion = cfg.openwebuiApiKey != "" || cfg.openwebuiApiKeyFile != null || cfg.environmentFile != null;
-        message = "services.llmbot: either openwebuiApiKey, openwebuiApiKeyFile, or environmentFile must be set";
       }
     ];
 
@@ -156,41 +147,31 @@ in
           "PYTHONUNBUFFERED=1"
         ] ++ optionals (cfg.discordToken != "") [
           "DISCORD_BOT_TOKEN=${cfg.discordToken}"
-        ] ++ optionals (cfg.openwebuiApiKey != "") [
-          "OPENWEBUI_API_KEY=${cfg.openwebuiApiKey}"
         ];
 
         # Load secrets from files
         EnvironmentFile = mkIf (cfg.environmentFile != null) cfg.environmentFile;
         
         # Load credentials from files using systemd's LoadCredential
-        LoadCredential = mkMerge [
-          (mkIf (cfg.discordTokenFile != null) [
-            "discord-token:${cfg.discordTokenFile}"
-          ])
-          (mkIf (cfg.openwebuiApiKeyFile != null) [
-            "openwebui-key:${cfg.openwebuiApiKeyFile}"
-          ])
+        LoadCredential = mkIf (cfg.discordTokenFile != null) [
+          "discord-token:${cfg.discordTokenFile}"
         ];
       };
 
       script = let
         args = [
-          "--host=${cfg.serverUrl}"
+          "--ollama-host=${cfg.ollamaHost}"
           "--model=${cfg.model}"
           "--timeout=${toString cfg.requestTimeout}"
           "--searxng-url=${cfg.searxngUrl}"
+        ] ++ optionals (cfg.systemMessage != null) [
+          "--system-message=${cfg.systemMessage}"
         ] ++ optionals (cfg.systemMessageFile != null) [
           "--system-message-file=${cfg.systemMessageFile}"
         ];
         
-        credentialSetup = ''
-          ${optionalString (cfg.discordTokenFile != null) ''
-            export DISCORD_BOT_TOKEN="$(cat "$CREDENTIALS_DIRECTORY/discord-token")"
-          ''}
-          ${optionalString (cfg.openwebuiApiKeyFile != null) ''
-            export OPENWEBUI_API_KEY="$(cat "$CREDENTIALS_DIRECTORY/openwebui-key")"
-          ''}
+        credentialSetup = optionalString (cfg.discordTokenFile != null) ''
+          export DISCORD_BOT_TOKEN="$(cat "$CREDENTIALS_DIRECTORY/discord-token")"
         '';
       in ''
         ${credentialSetup}
