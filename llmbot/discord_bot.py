@@ -1,14 +1,13 @@
 """Discord bot integration for llmbot."""
 
 import logging
-import os
 import re
 
 import discord  # type: ignore[import-not-found]
+import ollama  # type: ignore[import-not-found]
 from discord.ext import commands  # type: ignore[import-not-found]
-from openwebui_chat_client import (  # type: ignore[import-not-found,import-untyped]
-    OpenWebUIClient,
-)
+
+from .tools import chat_with_tools, set_tool_config
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -19,41 +18,73 @@ logging.basicConfig(
 
 
 class LLMBot(commands.Bot):
-    """Discord bot that forwards messages to OpenWebUI backend."""
+    """Discord bot that forwards messages to Ollama backend."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
-        server_url: str,
+        ollama_host: str = "http://localhost:11434",
         model: str = "llama3.1:8b",
+        searxng_url: str = "http://localhost:8080/search",
         request_timeout: float = 15.0,
         system_message: str | None = None,
+        additional_system_message: str | None = None,
+        context_length: int = 2048,
+        context_trim_threshold: float = 0.8,
+        *,
+        enable_mcp_tools: bool = True,
     ) -> None:
-        """Initialize the bot with OpenWebUI connection."""
+        """Initialize the bot with Ollama connection."""
         intents = discord.Intents.default()
         intents.message_content = True
         super().__init__(command_prefix="!", intents=intents)
 
-        self.server_url = server_url
+        self.ollama_host = ollama_host
         self.model = model
         self.request_timeout = request_timeout
-        self.api_key = os.getenv("OPENWEBUI_API_KEY")
-        self.system_message = system_message or (
+        self.context_length = context_length
+        self.context_trim_threshold = context_trim_threshold
+        self.enable_mcp_tools = enable_mcp_tools
+
+        # Configure tools with searxng URL
+        set_tool_config(searxng_url)
+
+        # Build system message
+        base_system_message = system_message or (
             "You are an AI assistant helping multiple users in a group conversation. "
             "Messages will be formatted as 'username: message content'. "
             "Try to differentiate between users by addressing them by name when "
             "appropriate and maintaining awareness of who said what in the "
             "conversation context. "
             "Example format: 'Alice: What's the weather like?' or "
-            "'Bob: Thanks for the help!'"
+            "'I said: The weather looks sunny today!' "
+            "You have access to tools that can provide real-time information. "
+            "When you use a tool, you will receive the result and should provide "
+            "that information to the user along with any relevant explanation. "
+            "Always trust and use the results from tools when they are available. "
+            "When using the get_metar tool, always display the full raw METAR "
+            "between backtick characters (`) for easy reading, then put your "
+            "description below. Please include a description for all non-null "
+            "attributes. CRITICAL: always mention that this information should "
+            "not be used for real-life flight planning purposes. "
+            "When using tools for mathematical operations (like counting letters "
+            "or adding numbers), repeat the exact result from the tool verbatim "
+            "to ensure accuracy."
+            "When asked to search for things on the web, always search for "
+            "multiple sources, and provide links to any sources you site."
         )
 
-        if not self.api_key:
-            msg = "OPENWEBUI_API_KEY environment variable not set"
-            raise ValueError(msg)
+        # Append additional system message if provided
+        if additional_system_message:
+            self.system_message = (
+                f"{base_system_message}\n\n{additional_system_message}"
+            )
+        else:
+            self.system_message = base_system_message
 
-        self.openwebui_client = OpenWebUIClient(
-            base_url=server_url, token=self.api_key, default_model_id=self.model
-        )
+        self.ollama_client = ollama.Client(host=ollama_host)
+
+        # Per-channel conversation history: channel_id -> list of message dicts
+        self.conversation_history: dict[int, list[dict[str, str]]] = {}
 
     def _parse_model_from_query(self, query: str) -> tuple[str, str]:
         """Parse model specification from query and return (model, cleaned_query)."""
@@ -69,6 +100,90 @@ class LLMBot(commands.Bot):
 
         # No model specified, use default
         return self.model, query
+
+    def _estimate_tokens(self, text: str) -> int:
+        """Rough token estimation (4 chars ≈ 1 token for English)."""
+        return len(text) // 4
+
+    def _format_message_with_timestamp(
+        self, user_name: str, content: str, *, is_bot: bool = False
+    ) -> str:
+        """Format a message with user identification."""
+        if is_bot:
+            return f"I said: {content}"
+        return f"{user_name}: {content}"
+
+    def _add_to_history(
+        self, channel_id: int, user_name: str, content: str, *, is_bot: bool = False
+    ) -> None:
+        """Add a message to the channel's conversation history."""
+        if channel_id not in self.conversation_history:
+            self.conversation_history[channel_id] = []
+
+        formatted_message = self._format_message_with_timestamp(
+            user_name, content, is_bot=is_bot
+        )
+        message_dict = {
+            "role": "assistant" if is_bot else "user",
+            "content": formatted_message,
+        }
+
+        self.conversation_history[channel_id].append(message_dict)
+
+    def _trim_history_if_needed(self, channel_id: int) -> None:
+        """Remove oldest messages if we're approaching context limit."""
+        if channel_id not in self.conversation_history:
+            return
+
+        history = self.conversation_history[channel_id]
+
+        # Calculate current token usage (system message + history)
+        system_tokens = self._estimate_tokens(self.system_message)
+        history_tokens = sum(self._estimate_tokens(msg["content"]) for msg in history)
+        total_tokens = system_tokens + history_tokens
+
+        # Use configurable threshold to leave room for response
+        token_threshold = int(self.context_length * self.context_trim_threshold)
+
+        # Remove oldest messages until we're under threshold
+        while total_tokens > token_threshold and len(history) > 1:
+            removed_msg = history.pop(0)
+            total_tokens -= self._estimate_tokens(removed_msg["content"])
+            logger.info(
+                "Trimmed oldest message from channel %s context (%d -> %d tokens)",
+                channel_id,
+                total_tokens + self._estimate_tokens(removed_msg["content"]),
+                total_tokens,
+            )
+
+    async def verify_context_length(self, model_name: str) -> None:
+        """Verify the context length can be set for a model. Fails fast on errors."""
+        try:
+            # Make a test call to ensure the model accepts our context length
+            self.ollama_client.chat(
+                model=model_name,
+                messages=[{"role": "user", "content": "test"}],
+                options={"num_ctx": self.context_length},
+            )
+
+            # If we get here, the context length was accepted
+            logger.info(
+                "Context length %d verified for model %s",
+                self.context_length,
+                model_name,
+            )
+
+        except Exception as e:
+            logger.exception(
+                "Failed to set context length %d for model %s",
+                self.context_length,
+                model_name,
+            )
+            msg = (
+                f"Cannot configure context length {self.context_length} "
+                f"for model {model_name}: {e}"
+            )
+            raise RuntimeError(msg) from e
 
     async def on_ready(self) -> None:
         """Handle bot ready event."""
@@ -110,31 +225,84 @@ class LLMBot(commands.Bot):
         model_to_use, cleaned_query = self._parse_model_from_query(query)
 
         logger.info(
-            "Query received - User: %s, Model: %s, Query: %s",
+            "Query received - Channel: %s, User: %s, Model: %s, Query: %s",
+            channel_id,
             user_name,
             model_to_use,
             cleaned_query,
         )
 
+        # Add user message to history and trim if needed
+        self._add_to_history(channel_id, user_name, cleaned_query, is_bot=False)
+        self._trim_history_if_needed(channel_id)
+
         # Show typing indicator for the entire process
         async with message.channel.typing():
             try:
-                # Format query with user name for identification
-                formatted_query = f"{user_name}: {cleaned_query}"
+                # Build message list with system message + conversation history
+                messages = [{"role": "system", "content": self.system_message}]
 
-                # Use openwebui-chat-client
-                result = self.openwebui_client.chat(
-                    question=formatted_query,
-                    model_id=model_to_use,
-                    chat_title=f"discord-channel-{channel_id}",
-                )
+                # Add conversation history for this channel
+                if channel_id in self.conversation_history:
+                    messages.extend(self.conversation_history[channel_id])
 
-                response_text = result.get("response") if result else None
+                # Use ollama client with or without tools
+                if self.enable_mcp_tools:
+                    response_text, full_conversation = chat_with_tools(
+                        messages,
+                        self.ollama_client,
+                        model_to_use,
+                        options={"num_ctx": self.context_length},
+                    )
+                    # If tools were used, the conversation includes tool interactions
+                    # Only add the final assistant response, not the tool calls
+                    if len(full_conversation) > len(messages):
+                        # Tools were used, add only the final response
+                        # without "I said:" prefix
+                        # Find the last assistant message in the conversation
+                        for msg in reversed(full_conversation):
+                            if (
+                                msg.get("role") == "assistant"
+                                and "content" in msg
+                                and msg["content"]
+                            ):
+                                # Add this as a regular assistant message
+                                # to maintain conversation flow
+                                message_dict = {
+                                    "role": "assistant",
+                                    "content": f"Assistant: {response_text}",
+                                }
+                                self.conversation_history[channel_id].append(
+                                    message_dict
+                                )
+                                break
+                    else:
+                        # No tools used, add normally
+                        self._add_to_history(
+                            channel_id, "Assistant", response_text, is_bot=True
+                        )
+                else:
+                    result = self.ollama_client.chat(
+                        model=model_to_use,
+                        messages=messages,
+                        options={"num_ctx": self.context_length},
+                    )
+                    response_text = (
+                        result["message"]["content"]
+                        if result
+                        else "No response received"
+                    )
+                    # Add bot response to conversation history
+                    self._add_to_history(
+                        channel_id, "Assistant", response_text, is_bot=True
+                    )
+
                 if not response_text:
                     response_text = "No response received from the model."
 
                 logger.info(
-                    "Query successful - User: %s, Response: %d chars",
+                    "Query successful - Channel: %s, User: %s, Response: %d chars",
+                    channel_id,
                     user_name,
                     len(response_text),
                 )
@@ -155,20 +323,43 @@ class LLMBot(commands.Bot):
             except Exception as e:
                 error_msg = f"Error processing your request: {e}"
                 logger.exception(
-                    "Query failed - User: %s",
+                    "Query failed - Channel: %s, User: %s",
+                    channel_id,
                     user_name,
                 )
                 await message.reply(error_msg)
 
 
-async def start_discord_bot(
+async def start_discord_bot(  # noqa: PLR0913
     token: str,
-    server_url: str,
+    ollama_host: str = "http://localhost:11434",
     *,
     model: str = "llama3.1:8b",
+    searxng_url: str = "http://localhost:8080/search",
     request_timeout: float = 15.0,
     system_message: str | None = None,
+    additional_system_message: str | None = None,
+    context_length: int = 2048,
+    context_trim_threshold: float = 0.8,
+    enable_mcp_tools: bool = True,
 ) -> None:
     """Start the Discord bot."""
-    bot = LLMBot(server_url, model, request_timeout, system_message)
+    bot = LLMBot(
+        ollama_host,
+        model,
+        searxng_url,
+        request_timeout,
+        system_message,
+        additional_system_message,
+        context_length,
+        context_trim_threshold,
+        enable_mcp_tools=enable_mcp_tools,
+    )
+
+    # Verify context length can be set before starting the bot
+    try:
+        await bot.verify_context_length(model)
+    except RuntimeError as e:
+        logger.exception("Bot startup failed")
+        raise SystemExit(1) from e
     await bot.start(token)

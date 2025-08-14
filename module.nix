@@ -68,18 +68,23 @@ in
       default = "llama3.1:8b";
     };
 
-    contextLimit = mkOption {
-      type = types.int;
-      description = "Maximum number of messages to keep in context.";
-      default = 10;
-    };
-
     requestTimeout = mkOption {
       type = types.float;
       description = "Request timeout in seconds.";
       default = 15.0;
     };
 
+    searxngUrl = mkOption {
+      type = types.str;
+      description = "SearXNG instance URL for web search functionality.";
+      default = "http://localhost:8080/search";
+    };
+
+    systemMessageFile = mkOption {
+      type = types.nullOr types.path;
+      description = "Path to file containing additional system message content to append to the default system message.";
+      default = null;
+    };
 
     user = mkOption {
       type = types.str;
@@ -171,10 +176,12 @@ in
 
       script = let
         args = [
-          "--server-url=${cfg.serverUrl}"
+          "--host=${cfg.serverUrl}"
           "--model=${cfg.model}"
-          "--context-limit=${toString cfg.contextLimit}"
           "--timeout=${toString cfg.requestTimeout}"
+          "--searxng-url=${cfg.searxngUrl}"
+        ] ++ optionals (cfg.systemMessageFile != null) [
+          "--system-message-file=${cfg.systemMessageFile}"
         ];
         
         credentialSetup = ''

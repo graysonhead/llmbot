@@ -1,13 +1,13 @@
 [project]
 name = "llmbot"
 version = "0.0.0"
-description = "LLM Gateway for Discord - Connect Discord users to LLMs via OpenWebUI"
+description = "LLM Gateway for Discord - Connect Discord users to LLMs via Ollama"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "GPL-3.0-or-later"
 authors = [{ name = "Grayson Head", email = "grayson@graysonhead.net" }]
 maintainers = [{ name = "Grayson Head", email = "grayson@graysonhead.net" }]
-keywords = ["discord", "llm", "gateway", "openwebui", "chatbot"]
+keywords = ["discord", "llm", "gateway", "ollama", "chatbot"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Environment :: No Input/Output (Daemon)",
@@ -24,7 +24,7 @@ classifiers = [
   "Typing :: Typed",
 ]
 
-dependencies = ["click", "discord.py", "openwebui-chat-client"]
+dependencies = ["click", "discord.py", "mcp", "ollama", "requests"]
 
 [project.optional-dependencies]
 

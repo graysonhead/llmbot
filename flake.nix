@@ -23,41 +23,6 @@
         ## Get project specification:
         project = pyproject.project;
 
-        ## Create openwebui-chat-client package:
-        openwebui-chat-client = pkgs.python3Packages.buildPythonPackage rec {
-          pname = "openwebui-chat-client";
-          version = "0.1.16";
-          format = "wheel";
-
-          src = pkgs.fetchurl {
-            url = "https://files.pythonhosted.org/packages/15/b6/6196b4a3eb551ae6a3fe580cac3b1c16bb229530309165c73a449c303a32/openwebui_chat_client-0.1.16-py3-none-any.whl";
-            sha256 = "sha256-gJNIBk50bhdpVWRJmENfxdpoz3z2BDfUioyLBGrzRko=";
-          };
-
-          build-system = with pkgs.python3Packages; [
-            setuptools
-            wheel
-          ];
-
-          propagatedBuildInputs = with pkgs.python3Packages; [
-            requests
-            pydantic
-            typing-extensions
-            python-dotenv
-          ];
-
-          # Skip tests as they may require network access or OpenWebUI server
-          doCheck = false;
-
-          pythonImportsCheck = [ "openwebui_chat_client" ];
-
-          meta = with pkgs.lib; {
-            description = "A comprehensive Python client for the Open WebUI API";
-            homepage = "https://pypi.org/project/openwebui-chat-client/";
-            license = licenses.gpl3Only;
-            maintainers = [ ];
-          };
-        };
 
         ## Get the package:
         package = pkgs.python3Packages.buildPythonPackage {
@@ -101,8 +66,9 @@
           propagatedBuildInputs = with pkgs.python3Packages; [
             click
             discordpy
-          ] ++ [
-            openwebui-chat-client
+            mcp
+            ollama
+            requests
           ];
         };
 
@@ -119,7 +85,6 @@
         packages = {
           "${project.name}" = package;
           default = self.packages.${system}.${project.name};
-          openwebui-chat-client = openwebui-chat-client;
         };
 
         ## Project development shell output:

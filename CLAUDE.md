@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is `llmbot` - an LLM Gateway for Discord that connects Discord users to LLMs via OpenWebUI. It's a Python package built with Click for CLI functionality.
+This is `llmbot` - an LLM Gateway for Discord that connects Discord users to LLMs via Ollama. It's a Python package built with Click for CLI functionality.
 
 ## Development Environment
 
