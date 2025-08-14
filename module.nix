@@ -20,7 +20,9 @@ in
         propagatedBuildInputs = with pkgs.python3Packages; [
           click
           discordpy
-          openai
+          mcp
+          ollama
+          requests
         ];
       };
       description = "The llmbot package to use.";
