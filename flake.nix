@@ -64,8 +64,11 @@
 
           ## Specify production dependencies:
           propagatedBuildInputs = with pkgs.python3Packages; [
+            anthropic
+            caldav
             click
             discordpy
+            icalendar
             mcp
             ollama
             requests

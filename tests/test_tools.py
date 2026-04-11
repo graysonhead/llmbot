@@ -5,20 +5,22 @@
 import re
 import sys
 import time
-
-# Mock the ollama and requests modules to avoid import issues in tests
 from unittest.mock import Mock
 
+# Mock the ollama and requests modules to avoid import issues in tests
 import pytest
 
 sys.modules["ollama"] = Mock()
 sys.modules["requests"] = Mock()
+sys.modules["caldav"] = Mock()
+sys.modules["icalendar"] = Mock()
 
 from llmbot.tools import (
     add_numbers,
     count_letters,
     divide_numbers,
     get_current_time,
+    get_taf,
     multiply_numbers,
     subtract_numbers,
 )
@@ -301,6 +303,104 @@ class TestDivideNumbers:
         """Test that invalid inputs raise ValueError"""
         with pytest.raises(ValueError, match="Invalid number format"):
             divide_numbers("abc", 5)
+
+
+class TestGetTaf:
+    """Test cases for the get_taf function."""
+
+    def test_get_taf_success(self):
+        """Test successful TAF fetch returns formatted output."""
+        mock_requests = sys.modules["requests"]
+        mock_response = Mock()
+        mock_response.json.return_value = [
+            {
+                "icaoId": "KJFK",
+                "name": "John F Kennedy Intl",
+                "rawTAF": "KJFK 101730Z 1018/1124 27015KT P6SM FEW040",
+                "issueTime": "2024-01-10T17:30:00Z",
+                "validTimeFrom": "2024-01-10T18:00:00Z",
+                "validTimeTo": "2024-01-11T24:00:00Z",
+                "lat": 40.63,
+                "lon": -73.78,
+                "prior": 0,
+                "mostRecent": 1,
+                "dbPopTime": None,
+                "bulletinTime": None,
+                "fcsts": [
+                    {
+                        "timeFrom": "2024-01-10T18:00:00Z",
+                        "timeTo": "2024-01-11T00:00:00Z",
+                        "wdir": 270,
+                        "wspd": 15,
+                        "visib": 6.0,
+                        "wxString": None,
+                        "clouds": [{"cover": "FEW", "base": 4000}],
+                    }
+                ],
+            }
+        ]
+        mock_response.raise_for_status = Mock()
+        mock_requests.get.return_value = mock_response
+        mock_requests.RequestException = Exception
+
+        result = get_taf("KJFK")
+        assert "John F Kennedy Intl" in result
+        assert "KJFK 101730Z" in result
+        assert "Forecast Periods:" in result
+        assert "2024-01-10T18:00:00Z" in result
+
+    def test_get_taf_no_data(self):
+        """Test that empty response returns appropriate error message."""
+        mock_requests = sys.modules["requests"]
+        mock_response = Mock()
+        mock_response.json.return_value = []
+        mock_response.raise_for_status = Mock()
+        mock_requests.get.return_value = mock_response
+        mock_requests.RequestException = Exception
+
+        result = get_taf("ZZZZ")
+        assert "No TAF data found for airport code: ZZZZ" in result
+
+    def test_get_taf_3letter_fallback(self):
+        """Test that 3-letter codes fall back to K-prefix."""
+        mock_requests = sys.modules["requests"]
+        mock_requests.get.reset_mock()
+
+        empty_response = Mock()
+        empty_response.json.return_value = []
+        empty_response.raise_for_status = Mock()
+
+        full_response = Mock()
+        full_response.json.return_value = [
+            {
+                "icaoId": "KGTU",
+                "name": "Georgetown Municipal",
+                "rawTAF": "KGTU 101730Z 1018/1118 VRB05KT P6SM SKC",
+                "fcsts": [],
+                "prior": 0,
+                "mostRecent": 1,
+                "dbPopTime": None,
+                "bulletinTime": None,
+            }
+        ]
+        full_response.raise_for_status = Mock()
+
+        mock_requests.get.side_effect = [empty_response, full_response]
+        mock_requests.RequestException = Exception
+
+        result = get_taf("GTU")
+        assert "Georgetown Municipal" in result
+        assert mock_requests.get.call_count == 2
+
+    def test_get_taf_request_error(self):
+        """Test that network errors result in no-data message (caught in inner helper)."""
+        mock_requests = sys.modules["requests"]
+        mock_requests.RequestException = Exception
+        mock_requests.get.side_effect = Exception("connection refused")
+
+        result = get_taf("KJFK")
+        # Exception is caught inside fetch_taf_data, returns None -> no data message
+        assert "No TAF data found for airport code: KJFK" in result
 
 
 class TestGetCurrentTime:

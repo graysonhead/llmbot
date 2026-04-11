@@ -3,25 +3,22 @@
 import logging
 import types
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import ollama  # type: ignore[import-not-found]
 from mcp import ClientSession, StdioServerParameters  # type: ignore[import-not-found]
 from mcp.client.stdio import stdio_client  # type: ignore[import-not-found]
+
+if TYPE_CHECKING:
+    from .backends import LLMBackend
 
 logger = logging.getLogger(__name__)
 
 
 class LlmbotMCPClient:
-    """MCP client that connects to llmbot MCP server and integrates with Ollama."""
+    """MCP client that connects to the llmbot MCP server and an LLM backend."""
 
-    def __init__(self, model_name: str = "llama3.1:8b") -> None:
-        """Initialize the MCP client.
-
-        Args:
-            model_name: Name of the Ollama model to use
-        """
-        self.model_name = model_name
+    def __init__(self) -> None:
+        """Initialize the MCP client."""
         self.tools: list[dict[str, Any]] = []
         self.session: ClientSession | None = None
         self._mcp_context: Any = None
@@ -42,7 +39,6 @@ class LlmbotMCPClient:
 
     async def connect(self) -> None:
         """Connect to the llmbot MCP server and load tools."""
-        # Path to the MCP server script
         server_script = Path(__file__).parent / "mcp.py"
 
         logger.info("Connecting to llmbot MCP server: %s", server_script)
@@ -52,22 +48,19 @@ class LlmbotMCPClient:
         )
 
         try:
-            # Connect to the MCP server
             self._mcp_context = stdio_client(server_params)  # type: ignore[assignment]
             read_stream, write_stream = await self._mcp_context.__aenter__()  # type: ignore[attr-defined]
             self.session = ClientSession(read_stream, write_stream)
 
-            # Initialize the session
             await self.session.initialize()
 
-            # Get available tools from the server
             tools_result = await self.session.list_tools()
 
             logger.info("Connected to MCP server. Available tools:")
             for tool in tools_result.tools:
                 logger.info("  - %s: %s", tool.name, tool.description)
 
-                # Convert MCP tool to Ollama tool format
+                # Store tools in Ollama/OpenAI format (backends normalize as needed)
                 ollama_tool = {
                     "type": "function",
                     "function": {
@@ -100,11 +93,11 @@ class LlmbotMCPClient:
         """Call a tool on the MCP server.
 
         Args:
-            tool_name: Name of the tool to call
-            arguments: Arguments to pass to the tool
+            tool_name: Name of the tool to call.
+            arguments: Arguments to pass to the tool.
 
         Returns:
-            String result from the tool
+            String result from the tool.
         """
         if not self.session:
             msg = "MCP client not connected"
@@ -131,68 +124,51 @@ class LlmbotMCPClient:
 
     async def chat_with_tools(
         self,
-        messages: list[dict[str, str]],
-        ollama_client: ollama.Client,
-        **ollama_options: Any,  # noqa: ANN401
+        messages: list[dict[str, Any]],
+        backend: "LLMBackend",
+        system: str,
+        model: str | None = None,
     ) -> str:
-        """Chat with Ollama using MCP tools.
+        """Chat using MCP tools with any LLM backend.
 
         Args:
-            messages: List of message dictionaries for conversation
-            ollama_client: Ollama client instance
-            **ollama_options: Additional options to pass to Ollama
+            messages: Conversation history (without system message).
+            backend: LLM backend to use for API calls.
+            system: System prompt.
+            model: Override model name, or None to use the backend default.
 
         Returns:
-            Final response from the model
+            Final response from the model.
         """
         if not self.tools:
-            # No tools available, use regular chat
             logger.info("No MCP tools available, using regular chat")
-            result = ollama_client.chat(
-                model=self.model_name, messages=messages, **ollama_options
-            )
-            return result["message"]["content"] if result else "No response received"
+            result = backend.api_chat(messages, system, model=model)
+            return backend.extract_text(result)
 
+        backend_tools = backend.normalize_tools(self.tools)
         logger.info(
-            "Sending message to Ollama with %d MCP tools available", len(self.tools)
+            "Sending message to backend with %d MCP tools available", len(backend_tools)
         )
 
-        # Send message to Ollama with available tools
-        response = ollama_client.chat(
-            model=self.model_name, messages=messages, tools=self.tools, **ollama_options
-        )
+        response = backend.api_chat(messages, system, tools=backend_tools, model=model)
+        tool_calls = backend.extract_tool_calls(response)
 
-        # Check if model wants to use tools
-        if response["message"].get("tool_calls"):
-            logger.info(
-                "Model requested %d tool calls", len(response["message"]["tool_calls"])
-            )
+        if tool_calls:
+            logger.info("Model requested %d tool calls", len(tool_calls))
 
             conversation = messages.copy()
-            conversation.append(response["message"])
+            conversation.append(backend.make_assistant_message(response))
 
-            # Execute each tool call via MCP
-            for tool_call in response["message"]["tool_calls"]:
-                function_name = tool_call["function"]["name"]
-                function_args = tool_call["function"]["arguments"]
+            for tc in tool_calls:
+                logger.info(
+                    "Executing MCP tool call: %s(%s)", tc["name"], tc["arguments"]
+                )
+                tool_result = await self.call_mcp_tool(tc["name"], tc["arguments"])
+                conversation.append(
+                    backend.make_tool_result_message(tc["id"], tool_result)
+                )
 
-                logger.info("Executing tool call: %s(%s)", function_name, function_args)
+            final_response = backend.api_chat(conversation, system, model=model)
+            return backend.extract_text(final_response)
 
-                # Call the tool via MCP
-                tool_result = await self.call_mcp_tool(function_name, function_args)
-
-                # Add tool result to conversation
-                conversation.append({"role": "tool", "content": str(tool_result)})
-
-            # Get final response from Ollama with tool results
-            final_response = ollama_client.chat(
-                model=self.model_name, messages=conversation, **ollama_options
-            )
-
-            return (
-                final_response["message"]["content"]
-                if final_response
-                else "No response received"
-            )
-        # No tools called, return original response
-        return response["message"]["content"] if response else "No response received"
+        return backend.extract_text(response)

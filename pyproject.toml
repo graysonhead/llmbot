@@ -24,7 +24,7 @@ classifiers = [
   "Typing :: Typed",
 ]
 
-dependencies = ["click", "discord.py", "mcp", "ollama", "requests"]
+dependencies = ["anthropic", "caldav", "click", "discord.py", "icalendar", "mcp", "ollama", "requests"]
 
 [project.optional-dependencies]
 
@@ -59,7 +59,7 @@ exclude = ["tests*"]
 
 [tool.setuptools.package-data]
 
-llmbot = ["resources/*"]
+llmbot = ["py.typed", "resources/*"]
 
 ##########################
 ## PYTEST CONFIGURATION ##
@@ -188,7 +188,7 @@ select = [
 ]
 
 ## Ignore specific rules or categories:
-ignore = ["COM812"]
+ignore = ["COM812", "E501"]
 
 [tool.ruff.lint.pydocstyle]
 

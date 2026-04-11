@@ -3,10 +3,20 @@
 import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import ollama  # type: ignore[import-not-found]
 import requests  # type: ignore[import-untyped]
+
+from .caldav_tools import CALDAV_TOOL_FUNCTIONS, CALDAV_TOOLS
+from .loop_tools import (
+    LOOP_SELF_TOOL_FUNCTIONS,
+    LOOP_SELF_TOOLS,
+    LOOP_TOOL_FUNCTIONS,
+    LOOP_TOOLS,
+)
+
+if TYPE_CHECKING:
+    from .backends import LLMBackend
 
 logger = logging.getLogger(__name__)
 
@@ -203,6 +213,88 @@ def get_metar(icao_code: str) -> str:
         return result
 
 
+def _fetch_taf_data(code: str) -> dict | None:
+    """Fetch TAF data for a given ICAO code."""
+    try:
+        url = f"https://aviationweather.gov/api/data/taf?ids={code.upper()}&format=json"
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        return data[0] if data else None
+    except (requests.RequestException, KeyError, IndexError):
+        return None
+
+
+def _format_taf_periods(fcsts: list) -> str:
+    """Format TAF forecast periods into a readable string."""
+    exclude_fcst_fields = {"timeFrom", "timeTo"}
+    result = "\nForecast Periods:\n"
+    for period in fcsts:
+        time_from = period.get("timeFrom", "?")
+        time_to = period.get("timeTo", "?")
+        result += f"  From: {time_from} To: {time_to}\n"
+        for key, value in period.items():
+            if (
+                key not in exclude_fcst_fields
+                and value is not None
+                and value not in ("", [])
+            ):
+                result += f"    {key}: {value}\n"
+    return result
+
+
+def get_taf(icao_code: str) -> str:
+    """Get TAF weather forecast for an airport by ICAO code.
+
+    Args:
+        icao_code: 3 or 4-letter airport code (e.g., GTU, KGTU, KJFK)
+
+    Returns:
+        Formatted TAF data including airport name, raw forecast, and forecast periods
+    """
+    try:
+        code = icao_code.upper().strip()
+
+        taf_data = _fetch_taf_data(code)
+
+        faa_code_length = 3
+        if not taf_data and len(code) == faa_code_length:
+            k_code = f"K{code}"
+            taf_data = _fetch_taf_data(k_code)
+
+        if not taf_data:
+            return f"No TAF data found for airport code: {icao_code}"
+
+        airport_name = taf_data.get("name", "Unknown Airport")
+        raw_taf = taf_data.get("rawTAF", "No raw forecast available")
+
+        result = f"Airport: {airport_name}\n"
+        result += f"Raw TAF: {raw_taf}\n\n"
+
+        exclude_fields = {
+            "name",
+            "rawTAF",
+            "icaoId",
+            "dbPopTime",
+            "bulletinTime",
+            "prior",
+            "mostRecent",
+            "fcsts",
+        }
+        for key, value in taf_data.items():
+            if key not in exclude_fields and value is not None and value != "":
+                result += f"  {key}: {value}\n"
+
+        fcsts = taf_data.get("fcsts", [])
+        if fcsts:
+            result += _format_taf_periods(fcsts)
+
+    except Exception as e:  # noqa: BLE001
+        return f"Error fetching TAF data: {e}"
+    else:
+        return result
+
+
 def count_letters(text: str, letter: str) -> str:
     """Count occurrences of a specific letter in a text string.
 
@@ -276,6 +368,8 @@ def websearch(query: str, limit: int = 10) -> str:
 
 # Define tools in Ollama format
 TOOLS = [
+    *CALDAV_TOOLS,
+    *LOOP_TOOLS,
     {
         "type": "function",
         "function": {
@@ -314,6 +408,23 @@ TOOLS = [
         "function": {
             "name": "get_metar",
             "description": "Get METAR weather data for an airport by ICAO code",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "icao_code": {
+                        "type": "string",
+                        "description": "3 or 4-letter airport code (e.g., GTU, KJFK)",
+                    },
+                },
+                "required": ["icao_code"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_taf",
+            "description": "Get TAF weather forecast for an airport by ICAO code",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -444,8 +555,22 @@ TOOL_FUNCTIONS: dict[str, Callable[..., Any]] = {
     "divide_numbers": divide_numbers,
     "get_current_time": get_current_time,
     "get_metar": get_metar,
+    "get_taf": get_taf,
     "count_letters": count_letters,
     "websearch": websearch,
+    **CALDAV_TOOL_FUNCTIONS,
+    **LOOP_TOOL_FUNCTIONS,
+}
+
+# Tools available during loop *execution* — excludes loop management tools so the
+# LLM doesn't try to create/trigger loops while running a scheduled prompt,
+# but includes self-inspection tools so the loop can read and update its own config.
+LOOP_EXECUTION_TOOLS = [
+    t for t in TOOLS if t["function"]["name"] not in LOOP_TOOL_FUNCTIONS
+] + LOOP_SELF_TOOLS
+LOOP_EXECUTION_TOOL_FUNCTIONS: dict[str, Callable[..., Any]] = {
+    **{k: v for k, v in TOOL_FUNCTIONS.items() if k not in LOOP_TOOL_FUNCTIONS},
+    **LOOP_SELF_TOOL_FUNCTIONS,
 }
 
 
@@ -474,81 +599,63 @@ def call_tool(tool_name: str, arguments: dict[str, Any]) -> str:
         return error_msg
 
 
+_MAX_TOOL_ITERATIONS = 10
+
+
 def chat_with_tools(
-    messages: list[dict[str, str]],
-    ollama_client: ollama.Client,
-    model: str,
-    **ollama_options: Any,  # noqa: ANN401
-) -> tuple[str, list[dict[str, str]]]:
-    """Chat with Ollama using built-in tools.
+    messages: list[dict[str, Any]],
+    backend: "LLMBackend",
+    system: str,
+    model: str | None = None,
+    tools: list[dict[str, Any]] | None = None,
+) -> tuple[str, list[dict[str, Any]]]:
+    """Chat using built-in tools with any LLM backend.
 
     Args:
-        messages: List of message dictionaries for conversation
-        ollama_client: Ollama client instance
-        model: Model name to use
-        **ollama_options: Additional options to pass to Ollama
+        messages: Conversation history (without system message).
+        backend: LLM backend to use for API calls.
+        system: System prompt.
+        model: Override model name, or None to use the backend default.
+        tools: Tool definitions to expose; defaults to the full :data:`TOOLS` list.
 
     Returns:
-        Tuple of (final response text, complete conversation with tool calls)
+        Tuple of (final response text, complete conversation with tool calls).
     """
-    if not TOOLS:
-        # No tools available, use regular chat
+    active_tools = TOOLS if tools is None else tools
+    if not active_tools:
         logger.info("No tools available, using regular chat")
-        result = ollama_client.chat(model=model, messages=messages, **ollama_options)
-        response_text = (
-            result["message"]["content"] if result else "No response received"
-        )
-        return response_text, messages
+        response = backend.api_chat(messages, system, model=model)
+        return backend.extract_text(response), messages
 
-    logger.info("Sending message to Ollama with %d tools available", len(TOOLS))
-
-    # Send message to Ollama with available tools
-    response = ollama_client.chat(
-        model=model, messages=messages, tools=TOOLS, **ollama_options
+    backend_tools = backend.normalize_tools(active_tools)
+    logger.info(
+        "Sending message to backend with %d tools available", len(backend_tools)
     )
 
-    # Check if model wants to use tools
-    if response["message"].get("tool_calls"):
-        logger.info(
-            "Model requested %d tool calls", len(response["message"]["tool_calls"])
+    conversation = messages.copy()
+    response = backend.api_chat(conversation, system, tools=backend_tools, model=model)
+
+    for _iteration in range(_MAX_TOOL_ITERATIONS):
+        tool_calls = backend.extract_tool_calls(response)
+        if not tool_calls:
+            break
+
+        logger.info("Model requested %d tool calls", len(tool_calls))
+        conversation.append(backend.make_assistant_message(response))
+
+        for tc in tool_calls:
+            logger.info("Executing tool call: %s(%s)", tc["name"], tc["arguments"])
+            tool_result = call_tool(tc["name"], tc["arguments"])
+            conversation.append(backend.make_tool_result_message(tc["id"], tool_result))
+
+        logger.info("Sending conversation with tool results back to backend")
+        response = backend.api_chat(
+            conversation, system, tools=backend_tools, model=model
+        )
+    else:
+        logger.warning(
+            "Tool loop reached max iterations (%d); returning last response",
+            _MAX_TOOL_ITERATIONS,
         )
 
-        conversation = messages.copy()
-        conversation.append(response["message"])
-
-        # Execute each tool call
-        for tool_call in response["message"]["tool_calls"]:
-            function_name = tool_call["function"]["name"]
-            function_args = tool_call["function"]["arguments"]
-
-            logger.info("Executing tool call: %s(%s)", function_name, function_args)
-
-            # Call the tool
-            tool_result = call_tool(function_name, function_args)
-
-            # Add tool result to conversation with proper format
-            tool_response = {"role": "tool", "content": str(tool_result)}
-
-            # Include tool_call_id if present (required by some models)
-            if "id" in tool_call:
-                tool_response["tool_call_id"] = tool_call["id"]
-
-            conversation.append(tool_response)
-
-        # Get final response from Ollama with tool results
-        logger.info("Sending conversation with tool results: %s", conversation)
-        final_response = ollama_client.chat(
-            model=model, messages=conversation, **ollama_options
-        )
-
-        final_response_text = (
-            final_response["message"]["content"]
-            if final_response
-            else "No response received"
-        )
-        return final_response_text, conversation
-    # No tools called, return original response
-    response_text = (
-        response["message"]["content"] if response else "No response received"
-    )
-    return response_text, messages
+    return backend.extract_text(response), conversation
