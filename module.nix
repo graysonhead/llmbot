@@ -161,7 +161,7 @@ in
           "PYTHONUNBUFFERED=1"
           "LLMBOT_DB_PATH=/var/lib/llmbot/memory.db"
           "OLLAMA_HOST=${cfg.ollamaHost}"
-          "OLLAMA_MODEL=${cfg.model}"
+          "LLMBOT_MODEL=${cfg.model}"
           "REQUEST_TIMEOUT=${toString cfg.requestTimeout}"
           "SEARXNG_URL=${cfg.searxngUrl}"
         ] ++ optionals (cfg.discordToken != "") [

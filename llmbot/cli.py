@@ -122,8 +122,8 @@ def query(  # noqa: PLR0913
 @click.option(
     "--model",
     default=None,
-    envvar="OLLAMA_MODEL",
-    help="Model to use (also reads OLLAMA_MODEL; backend-specific default if omitted)",
+    envvar="LLMBOT_MODEL",
+    help="Model to use (also reads LLMBOT_MODEL; backend-specific default if omitted)",
 )
 @click.option(
     "--searxng-url",
