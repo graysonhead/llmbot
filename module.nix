@@ -18,11 +18,20 @@ in
         src = ./.;
         build-system = with pkgs.python3Packages; [ setuptools ];
         propagatedBuildInputs = with pkgs.python3Packages; [
+          anthropic
+          caldav
           click
           discordpy
+          fastapi
+          google-auth
+          google-auth-oauthlib
+          icalendar
+          jinja2
           mcp
           ollama
+          python-multipart
           requests
+          uvicorn
         ];
       };
       description = "The llmbot package to use.";
