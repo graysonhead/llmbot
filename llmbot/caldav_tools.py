@@ -4,7 +4,7 @@ import logging
 import os
 import uuid
 from collections.abc import Callable
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -14,8 +14,15 @@ import icalendar  # type: ignore[import-untyped]
 logger = logging.getLogger(__name__)
 
 
-def _get_connection() -> tuple[caldav.DAVClient, caldav.Principal]:
-    """Connect to the CalDAV server using environment variables.
+def _get_connection(
+    prefix: str = "CALDAV",
+) -> tuple[caldav.DAVClient, caldav.Principal]:
+    """Connect to a CalDAV server using environment variables.
+
+    Args:
+        prefix: Environment variable prefix, e.g. 'CALDAV' reads CALDAV_URL,
+            CALDAV_USER, CALDAV_PASSWORD.  Use 'WIFE_CALDAV' for the second
+            account.
 
     Returns:
         Tuple of (DAVClient, Principal) for the configured server.
@@ -23,15 +30,15 @@ def _get_connection() -> tuple[caldav.DAVClient, caldav.Principal]:
     Raises:
         ValueError: If any required environment variables are missing.
     """
-    url = os.environ.get("CALDAV_URL", "")
-    username = os.environ.get("CALDAV_USER", "")
-    password = os.environ.get("CALDAV_PASSWORD", "")
+    url = os.environ.get(f"{prefix}_URL", "")
+    username = os.environ.get(f"{prefix}_USER", "")
+    password = os.environ.get(f"{prefix}_PASSWORD", "")
     missing = [
         name
         for name, val in [
-            ("CALDAV_URL", url),
-            ("CALDAV_USER", username),
-            ("CALDAV_PASSWORD", password),
+            (f"{prefix}_URL", url),
+            (f"{prefix}_USER", username),
+            (f"{prefix}_PASSWORD", password),
         ]
         if not val
     ]
@@ -63,6 +70,25 @@ def _find_calendar(principal: caldav.Principal, name: str) -> caldav.Calendar:
     raise ValueError(msg)
 
 
+def _parse_end_dt(dt_str: str, tz: str = "") -> datetime:
+    """Parse an end-of-range datetime, treating bare dates as end-of-day.
+
+    When *dt_str* contains no time component (e.g. ``'2025-01-31'``), the time
+    is set to ``23:59:59`` so that the range is inclusive of the whole day.
+    Strings that already include a time component are passed through unchanged.
+
+    Args:
+        dt_str: ISO 8601 string, e.g. '2025-01-31' or '2025-01-31T23:59:59'.
+        tz: IANA timezone name. Empty string means system local timezone.
+
+    Returns:
+        A UTC timezone-aware datetime representing the end of the range.
+    """
+    if "T" not in dt_str and " " not in dt_str:
+        dt_str = f"{dt_str}T23:59:59"
+    return _parse_dt(dt_str, tz)
+
+
 def _parse_dt(dt_str: str, tz: str = "") -> datetime:
     """Parse an ISO 8601 datetime string into a UTC datetime.
 
@@ -89,6 +115,30 @@ def _parse_dt(dt_str: str, tz: str = "") -> datetime:
     if tz:
         return dt.replace(tzinfo=ZoneInfo(tz)).astimezone(utc)
     return dt.astimezone(utc)
+
+
+def _format_dt(dt: date | datetime, timezone: str = "") -> str:
+    """Format a date or datetime value, converting to the given timezone.
+
+    All-day events (bare ``date`` values) are returned as-is.  Timezone-aware
+    datetimes are converted to *timezone* (or the system local timezone when
+    *timezone* is empty).  Naive datetimes are assumed to be UTC before
+    conversion.
+
+    Args:
+        dt: A ``date`` or ``datetime`` value from an iCal component.
+        timezone: IANA timezone name, e.g. 'America/Chicago'. Empty string
+            means use the system local timezone.
+
+    Returns:
+        A formatted string representing the date/time.
+    """
+    if not isinstance(dt, datetime):
+        return str(dt)
+    target = ZoneInfo(timezone) if timezone else datetime.now().astimezone().tzinfo
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=ZoneInfo("UTC"))
+    return str(dt.astimezone(target))
 
 
 def _make_event_ical(  # noqa: PLR0913
@@ -189,6 +239,7 @@ def get_caldav_context() -> str | None:
             f"The server's local timezone is {local_tz}. When calling calendar "
             f"tools, omit the 'timezone' argument to use this default, or pass "
             f"an IANA timezone name (e.g. 'America/Chicago') to override it."
+            f"Listing events from this tool only shows calendars in caldav, you should also check gcal"
         )
 
 
@@ -235,7 +286,7 @@ def caldav_get_events(
         _, principal = _get_connection()
         cal = _find_calendar(principal, calendar_name)
         start = _parse_dt(start_date, timezone)
-        end = _parse_dt(end_date, timezone)
+        end = _parse_end_dt(end_date, timezone)
         # Use expand=False to avoid server-side expansion of recurring events,
         # which fails when events contain non-IANA timezone abbreviations (e.g.
         # 'CDT') that the server's zoneinfo cannot resolve.
@@ -255,8 +306,8 @@ def caldav_get_events(
             location = str(comp.get("LOCATION", ""))
             description = str(comp.get("DESCRIPTION", ""))
             rrule = comp.get("RRULE")
-            start_str = str(dtstart.dt) if dtstart else "?"
-            end_str = str(dtend.dt) if dtend else "?"
+            start_str = _format_dt(dtstart.dt, timezone) if dtstart else "?"
+            end_str = _format_dt(dtend.dt, timezone) if dtend else "?"
             line = f"  [{uid}] {summary} | {start_str} -> {end_str}"
             if rrule:
                 line += f" (repeats: {rrule.to_ical().decode()})"
@@ -640,7 +691,7 @@ CALDAV_TOOLS = [
                     },
                     "timezone": {
                         "type": "string",
-                        "description": "IANA timezone, e.g. 'America/Chicago'. Defaults to system local time.",
+                        "description": "IANA timezone, e.g. 'America/Chicago'. Applied to both input and output. Defaults to system local time.",
                     },
                 },
                 "required": ["calendar_name", "start_date", "end_date"],
@@ -681,7 +732,7 @@ CALDAV_TOOLS = [
                     },
                     "timezone": {
                         "type": "string",
-                        "description": "IANA timezone, e.g. 'America/Chicago'. Defaults to system local time.",
+                        "description": "IANA timezone, e.g. 'America/Chicago'. Applied to both input and output. Defaults to system local time.",
                     },
                     "recurrence": {
                         "type": "string",
@@ -730,7 +781,7 @@ CALDAV_TOOLS = [
                     },
                     "timezone": {
                         "type": "string",
-                        "description": "IANA timezone, e.g. 'America/Chicago'. Defaults to system local time.",
+                        "description": "IANA timezone, e.g. 'America/Chicago'. Applied to both input and output. Defaults to system local time.",
                     },
                     "recurrence": {
                         "type": "string",
@@ -809,7 +860,7 @@ CALDAV_TOOLS = [
                     },
                     "timezone": {
                         "type": "string",
-                        "description": "IANA timezone, e.g. 'America/Chicago'. Defaults to system local time.",
+                        "description": "IANA timezone, e.g. 'America/Chicago'. Applied to both input and output. Defaults to system local time.",
                     },
                 },
                 "required": ["calendar_name", "summary"],
@@ -854,7 +905,7 @@ CALDAV_TOOLS = [
                     },
                     "timezone": {
                         "type": "string",
-                        "description": "IANA timezone, e.g. 'America/Chicago'. Defaults to system local time.",
+                        "description": "IANA timezone, e.g. 'America/Chicago'. Applied to both input and output. Defaults to system local time.",
                     },
                 },
                 "required": ["calendar_name", "task_uid"],

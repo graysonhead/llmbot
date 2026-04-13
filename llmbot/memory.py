@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS loops (
     output_channel INTEGER  NOT NULL,
     target         TEXT     NOT NULL DEFAULT '',
     model          TEXT     NOT NULL DEFAULT '',
+    timezone       TEXT     NOT NULL DEFAULT 'UTC',
     enabled        INTEGER  NOT NULL DEFAULT 1,
     created_at     DATETIME NOT NULL DEFAULT (datetime('now')),
     last_run       DATETIME,
@@ -122,6 +123,12 @@ class MemoryStore:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
             conn.executescript(_SCHEMA)
+            # Migration: add timezone column to existing databases
+            cols = {row[1] for row in conn.execute("PRAGMA table_info(loops)")}
+            if "timezone" not in cols:
+                conn.execute(
+                    "ALTER TABLE loops ADD COLUMN timezone TEXT NOT NULL DEFAULT 'UTC'"
+                )
 
     # ------------------------------------------------------------------
     # Conversation summaries
@@ -341,17 +348,19 @@ class MemoryStore:
         next_run: datetime,
         target: str = "",
         model: str = "",
+        timezone: str = "UTC",
     ) -> int:
         """Insert a new loop and return its id.
 
         Args:
             name: Human-readable loop name.
-            frequency: Cron expression, e.g. ``"0 8 * * *"``.
+            frequency: Frequency string, e.g. ``"daily@08:00"``.
             prompt: System prompt used when the loop fires.
             output_channel: Discord channel snowflake to post results to.
             next_run: UTC datetime of the first scheduled execution.
             target: Optional mention string prepended to the response.
             model: Optional model override (empty string = use bot default).
+            timezone: IANA timezone name for scheduling (e.g. ``"America/Chicago"``).
 
         Returns:
             The auto-assigned loop id.
@@ -361,10 +370,19 @@ class MemoryStore:
             cursor = conn.execute(
                 """
                 INSERT INTO loops(name, frequency, prompt, output_channel,
-                                  target, model, next_run)
-                VALUES(?, ?, ?, ?, ?, ?, ?)
+                                  target, model, timezone, next_run)
+                VALUES(?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (name, frequency, prompt, output_channel, target, model, next_run_str),
+                (
+                    name,
+                    frequency,
+                    prompt,
+                    output_channel,
+                    target,
+                    model,
+                    timezone,
+                    next_run_str,
+                ),
             )
         return cursor.lastrowid or 0
 
@@ -380,7 +398,7 @@ class MemoryStore:
         with self._connect() as conn:
             row = conn.execute(
                 "SELECT id, name, frequency, prompt, output_channel, target, "
-                "model, enabled, created_at, last_run, next_run FROM loops WHERE id = ?",
+                "model, timezone, enabled, created_at, last_run, next_run FROM loops WHERE id = ?",
                 (loop_id,),
             ).fetchone()
         return _row_to_loop(row) if row else None
@@ -390,7 +408,7 @@ class MemoryStore:
         with self._connect() as conn:
             rows = conn.execute(
                 "SELECT id, name, frequency, prompt, output_channel, target, "
-                "model, enabled, created_at, last_run, next_run FROM loops ORDER BY id",
+                "model, timezone, enabled, created_at, last_run, next_run FROM loops ORDER BY id",
             ).fetchall()
         return [_row_to_loop(r) for r in rows]
 
@@ -441,11 +459,134 @@ class MemoryStore:
         with self._connect() as conn:
             rows = conn.execute(
                 "SELECT id, name, frequency, prompt, output_channel, target, "
-                "model, enabled, created_at, last_run, next_run FROM loops "
+                "model, timezone, enabled, created_at, last_run, next_run FROM loops "
                 "WHERE enabled = 1 AND next_run <= ?",
                 (now_str,),
             ).fetchall()
         return [_row_to_loop(r) for r in rows]
+
+    def get_all_memories(self) -> list[dict[str, Any]]:
+        """Return all memories ordered by user_id then last_accessed descending."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, user_id, content, tags, category,
+                       created_at, last_accessed, access_count
+                FROM memories
+                ORDER BY user_id, last_accessed DESC
+                """,
+            ).fetchall()
+        return [
+            {
+                "id": r[0],
+                "user_id": r[1],
+                "content": r[2],
+                "tags": json.loads(r[3]) if r[3] else [],
+                "category": r[4],
+                "created_at": r[5],
+                "last_accessed": r[6],
+                "access_count": r[7],
+            }
+            for r in rows
+        ]
+
+    def get_memory(self, memory_id: int) -> dict[str, Any] | None:
+        """Return a single memory by id, or None if not found."""
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT id, user_id, content, tags, category,
+                       created_at, last_accessed, access_count
+                FROM memories WHERE id = ?
+                """,
+                (memory_id,),
+            ).fetchone()
+        if not row:
+            return None
+        return {
+            "id": row[0],
+            "user_id": row[1],
+            "content": row[2],
+            "tags": json.loads(row[3]) if row[3] else [],
+            "category": row[4],
+            "created_at": row[5],
+            "last_accessed": row[6],
+            "access_count": row[7],
+        }
+
+    def update_memory(
+        self,
+        memory_id: int,
+        content: str,
+        tags: list[str],
+        category: str,
+    ) -> bool:
+        """Update content, tags, and category of a memory.
+
+        Returns:
+            True if a row was updated, False if id not found.
+        """
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "UPDATE memories SET content = ?, tags = ?, category = ? WHERE id = ?",
+                (content, json.dumps(tags), category, memory_id),
+            )
+        return cursor.rowcount > 0
+
+    def delete_memory(self, memory_id: int) -> bool:
+        """Delete a memory by id.
+
+        Returns:
+            True if a row was deleted, False if id not found.
+        """
+        with self._connect() as conn:
+            cursor = conn.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
+        return cursor.rowcount > 0
+
+    def create_memory(
+        self,
+        user_id: int,
+        content: str,
+        tags: list[str],
+        category: str,
+    ) -> int:
+        """Insert a new memory and return its id.
+
+        Args:
+            user_id: Discord user snowflake.
+            content: The memory text.
+            tags: List of keyword tags.
+            category: One of fact, preference, task, note, workflow.
+
+        Returns:
+            The auto-assigned memory id.
+        """
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "INSERT INTO memories(user_id, content, tags, category) VALUES(?, ?, ?, ?)",
+                (user_id, content, json.dumps(tags), category),
+            )
+        return cursor.lastrowid or 0
+
+    def get_all_channel_summaries(self) -> list[dict[str, Any]]:
+        """Return all channel summary rows ordered by last_updated descending."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT channel_id, summary, message_count, last_updated
+                FROM conversation_summaries
+                ORDER BY last_updated DESC
+                """,
+            ).fetchall()
+        return [
+            {
+                "channel_id": r[0],
+                "summary": r[1],
+                "message_count": r[2],
+                "last_updated": r[3],
+            }
+            for r in rows
+        ]
 
     def update_loop_run(
         self, loop_id: int, last_run: datetime, next_run: datetime
@@ -483,8 +624,9 @@ def _row_to_loop(row: tuple[Any, ...]) -> dict[str, Any]:
         "output_channel": row[4],
         "target": row[5],
         "model": row[6],
-        "enabled": bool(row[7]),
-        "created_at": row[8],
-        "last_run": row[9],
-        "next_run": row[10],
+        "timezone": row[7],
+        "enabled": bool(row[8]),
+        "created_at": row[9],
+        "last_run": row[10],
+        "next_run": row[11],
     }

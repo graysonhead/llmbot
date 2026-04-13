@@ -42,7 +42,7 @@ in
 
     environmentFile = mkOption {
       type = types.nullOr types.path;
-      description = "Path to environment file containing DISCORD_BOT_TOKEN variable.";
+      description = "Path to environment file containing bot configuration (e.g. an agenix secret). Variables in this file override per-option defaults set in the module.";
       default = null;
     };
 
@@ -144,11 +144,21 @@ in
         RestrictAddressFamilies = [ "AF_INET" "AF_INET6" ];
         SystemCallFilter = [ "@system-service" "~@privileged" ];
 
-        # Environment variables
+        # Creates /var/lib/llmbot with correct ownership for the service user
+        StateDirectory = "llmbot";
+
+        # Environment variables — EnvironmentFile entries take precedence over these
         Environment = [
           "PYTHONUNBUFFERED=1"
+          "LLMBOT_DB_PATH=/var/lib/llmbot/memory.db"
+          "OLLAMA_HOST=${cfg.ollamaHost}"
+          "OLLAMA_MODEL=${cfg.model}"
+          "REQUEST_TIMEOUT=${toString cfg.requestTimeout}"
+          "SEARXNG_URL=${cfg.searxngUrl}"
         ] ++ optionals (cfg.discordToken != "") [
           "DISCORD_BOT_TOKEN=${cfg.discordToken}"
+        ] ++ optionals (cfg.systemMessage != null) [
+          "SYSTEM_MESSAGE=${cfg.systemMessage}"
         ];
 
         # Load secrets from files
@@ -161,21 +171,16 @@ in
       };
 
       script = let
-        args = [
-          "--host=${cfg.ollamaHost}"
-          "--model=${cfg.model}"
-          "--timeout=${toString cfg.requestTimeout}"
-          "--searxng-url=${cfg.searxngUrl}"
-        ] ++ optionals (cfg.systemMessageFile != null) [
-          "--system-message-file=${cfg.systemMessageFile}"
-        ];
-        
         credentialSetup = optionalString (cfg.discordTokenFile != null) ''
           export DISCORD_BOT_TOKEN="$(cat "$CREDENTIALS_DIRECTORY/discord-token")"
         '';
+        systemMessageFileSetup = optionalString (cfg.systemMessageFile != null) ''
+          export SYSTEM_MESSAGE_FILE="${cfg.systemMessageFile}"
+        '';
       in ''
         ${credentialSetup}
-        exec ${cfg.package}/bin/llmbot discord ${concatStringsSep " " args}
+        ${systemMessageFileSetup}
+        exec ${cfg.package}/bin/llmbot discord
       '';
     };
   };

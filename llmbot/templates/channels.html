@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Channels — llmbot admin{% endblock %}
+{% block content %}
+<h1 class="mb-3">Channel Contexts</h1>
+
+{% if not channels %}
+  <p class="text-muted">No channel context stored yet. The bot saves summaries after every consolidation interval.</p>
+{% else %}
+<div class="list-group">
+  {% for ch in channels %}
+  <a href="/channels/{{ ch.channel_id }}" class="list-group-item list-group-item-action">
+    <div class="d-flex justify-content-between">
+      <strong>Channel {{ ch.channel_id }}</strong>
+      <small class="text-muted">Updated: {{ ch.last_updated }}</small>
+    </div>
+    <p class="mb-1 text-muted small">{{ ch.summary[:200] ~ "…" if ch.summary|length > 200 else ch.summary or "(no summary yet)" }}</p>
+    <small class="text-muted">{{ ch.message_count }} messages since last consolidation</small>
+  </a>
+  {% endfor %}
+</div>
+{% endif %}
+{% endblock %}

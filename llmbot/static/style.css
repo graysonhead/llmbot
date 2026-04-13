@@ -1,0 +1,16 @@
+/* llmbot admin — minimal overrides */
+body {
+  background-color: #f8f9fa;
+}
+
+.navbar-brand {
+  font-weight: 600;
+}
+
+.card {
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+pre, code {
+  font-size: 0.875em;
+}

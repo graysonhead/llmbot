@@ -2,18 +2,21 @@
 
 import logging
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 import requests  # type: ignore[import-untyped]
 
 from .caldav_tools import CALDAV_TOOL_FUNCTIONS, CALDAV_TOOLS
+from .gcal_tools import GCAL_TOOL_FUNCTIONS, GCAL_TOOLS
+from .imap_tools import IMAP_TOOL_FUNCTIONS, IMAP_TOOLS
 from .loop_tools import (
     LOOP_SELF_TOOL_FUNCTIONS,
     LOOP_SELF_TOOLS,
     LOOP_TOOL_FUNCTIONS,
     LOOP_TOOLS,
 )
+from .oncall_tools import ONCALL_TOOL_FUNCTIONS, ONCALL_TOOLS
 
 if TYPE_CHECKING:
     from .backends import LLMBackend
@@ -151,14 +154,32 @@ def get_current_time() -> str:
     Returns:
         Current date and time formatted as a string
     """
-    return datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
+    return datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
 
 
-def get_metar(icao_code: str) -> str:
+_METAR_TIMESTAMP_FIELDS = {"receiptTime", "reportTime"}
+_TAF_TIMESTAMP_FIELDS = {"issueTime", "validTimeFrom", "validTimeTo"}
+
+
+def _to_local_time(value: str | float) -> str:
+    """Convert a UTC ISO string or Unix timestamp to a local time string."""
+    try:
+        if isinstance(value, int | float):
+            dt = datetime.fromtimestamp(value).astimezone()
+        else:
+            dt = datetime.fromisoformat(str(value)).astimezone()
+        return dt.strftime("%Y-%m-%d %H:%M %Z")
+    except (ValueError, OSError):
+        return str(value)
+
+
+def get_metar(icao_code: str, with_zulu_time: bool = False) -> str:  # noqa: C901, FBT001, FBT002
     """Get METAR weather data for an airport by ICAO code.
 
     Args:
         icao_code: 3 or 4-letter airport code (e.g., GTU, KGTU, KJFK)
+        with_zulu_time: If True, timestamps are left in UTC/Zulu. Defaults to
+            False (local time).
 
     Returns:
         Formatted METAR data including airport name, raw observation, and attributes
@@ -205,6 +226,8 @@ def get_metar(icao_code: str) -> str:
         exclude_fields = {"name", "rawOb", "metar_id", "obsTime", "prior", "mostRecent"}
         for key, value in metar_data.items():
             if key not in exclude_fields and value is not None and value != "":
+                if not with_zulu_time and key in _METAR_TIMESTAMP_FIELDS:
+                    value = _to_local_time(value)  # noqa: PLW2901
                 result += f"  {key}: {value}\n"
 
     except Exception as e:  # noqa: BLE001
@@ -225,13 +248,16 @@ def _fetch_taf_data(code: str) -> dict | None:
         return None
 
 
-def _format_taf_periods(fcsts: list) -> str:
+def _format_taf_periods(fcsts: list, with_zulu_time: bool = False) -> str:  # noqa: FBT001, FBT002
     """Format TAF forecast periods into a readable string."""
     exclude_fcst_fields = {"timeFrom", "timeTo"}
     result = "\nForecast Periods:\n"
     for period in fcsts:
         time_from = period.get("timeFrom", "?")
         time_to = period.get("timeTo", "?")
+        if not with_zulu_time:
+            time_from = _to_local_time(time_from)
+            time_to = _to_local_time(time_to)
         result += f"  From: {time_from} To: {time_to}\n"
         for key, value in period.items():
             if (
@@ -243,11 +269,13 @@ def _format_taf_periods(fcsts: list) -> str:
     return result
 
 
-def get_taf(icao_code: str) -> str:
+def get_taf(icao_code: str, with_zulu_time: bool = False) -> str:  # noqa: FBT001, FBT002
     """Get TAF weather forecast for an airport by ICAO code.
 
     Args:
         icao_code: 3 or 4-letter airport code (e.g., GTU, KGTU, KJFK)
+        with_zulu_time: If True, timestamps are left in UTC/Zulu. Defaults to
+            False (local time).
 
     Returns:
         Formatted TAF data including airport name, raw forecast, and forecast periods
@@ -283,11 +311,13 @@ def get_taf(icao_code: str) -> str:
         }
         for key, value in taf_data.items():
             if key not in exclude_fields and value is not None and value != "":
+                if not with_zulu_time and key in _TAF_TIMESTAMP_FIELDS:
+                    value = _to_local_time(value)  # noqa: PLW2901
                 result += f"  {key}: {value}\n"
 
         fcsts = taf_data.get("fcsts", [])
         if fcsts:
-            result += _format_taf_periods(fcsts)
+            result += _format_taf_periods(fcsts, with_zulu_time=with_zulu_time)
 
     except Exception as e:  # noqa: BLE001
         return f"Error fetching TAF data: {e}"
@@ -369,6 +399,9 @@ def websearch(query: str, limit: int = 10) -> str:
 # Define tools in Ollama format
 TOOLS = [
     *CALDAV_TOOLS,
+    *GCAL_TOOLS,
+    *IMAP_TOOLS,
+    *ONCALL_TOOLS,
     *LOOP_TOOLS,
     {
         "type": "function",
@@ -415,6 +448,10 @@ TOOLS = [
                         "type": "string",
                         "description": "3 or 4-letter airport code (e.g., GTU, KJFK)",
                     },
+                    "with_zulu_time": {
+                        "type": "boolean",
+                        "description": "If true, timestamps are in UTC/Zulu. Defaults to false (local time).",
+                    },
                 },
                 "required": ["icao_code"],
             },
@@ -431,6 +468,10 @@ TOOLS = [
                     "icao_code": {
                         "type": "string",
                         "description": "3 or 4-letter airport code (e.g., GTU, KJFK)",
+                    },
+                    "with_zulu_time": {
+                        "type": "boolean",
+                        "description": "If true, timestamps are in UTC/Zulu. Defaults to false (local time).",
                     },
                 },
                 "required": ["icao_code"],
@@ -559,6 +600,9 @@ TOOL_FUNCTIONS: dict[str, Callable[..., Any]] = {
     "count_letters": count_letters,
     "websearch": websearch,
     **CALDAV_TOOL_FUNCTIONS,
+    **GCAL_TOOL_FUNCTIONS,
+    **IMAP_TOOL_FUNCTIONS,
+    **ONCALL_TOOL_FUNCTIONS,
     **LOOP_TOOL_FUNCTIONS,
 }
 

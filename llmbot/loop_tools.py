@@ -21,6 +21,7 @@ import threading
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
+from zoneinfo import ZoneInfo
 
 if TYPE_CHECKING:
     from .memory import MemoryStore
@@ -95,12 +96,23 @@ def is_valid_frequency(frequency: str) -> bool:
     return bool(m and m.group(1).lower() in _DAY_NAMES)
 
 
-def compute_next_run(frequency: str, after: datetime | None = None) -> datetime:
+def compute_next_run(
+    frequency: str,
+    after: datetime | None = None,
+    timezone: str = "UTC",
+) -> datetime:
     """Return the next UTC datetime this frequency fires after *after*.
+
+    For interval-based frequencies (``every:Nm/h/d``) the timezone is ignored
+    because the interval is relative to the last run.  For time-of-day
+    frequencies (``daily@``, ``weekdays@``, ``weekly:``) the *timezone*
+    determines what "08:00" means — use an IANA name such as
+    ``"America/Chicago"`` so that DST transitions are handled correctly.
 
     Args:
         frequency: A frequency string in the supported format.
         after: Reference UTC datetime; defaults to ``datetime.now(UTC)``.
+        timezone: IANA timezone name for time-of-day scheduling (default UTC).
 
     Returns:
         UTC-aware datetime of the next scheduled execution.
@@ -108,9 +120,11 @@ def compute_next_run(frequency: str, after: datetime | None = None) -> datetime:
     Raises:
         ValueError: If *frequency* is not a recognised format.
     """
-    base = (after or datetime.now(UTC)).astimezone(UTC)
+    tz = ZoneInfo(timezone)
+    now_utc = after or datetime.now(UTC)
+    base = now_utc.astimezone(tz)
 
-    # every:Nm / every:Nh / every:Nd
+    # every:Nm / every:Nh / every:Nd — interval is always relative, ignore tz
     m = re.fullmatch(r"every:(\d+)([mhd])", frequency)
     if m:
         amount = int(m.group(1))
@@ -122,10 +136,10 @@ def compute_next_run(frequency: str, after: datetime | None = None) -> datetime:
             if unit == "h"
             else timedelta(days=amount)
         )
-        return base + delta
+        return now_utc.astimezone(UTC) + delta
 
     def _next_time_of_day(ref: datetime, hour: int, minute: int) -> datetime:
-        """Return the next occurrence of HH:MM UTC on or after *ref*."""
+        """Return the next occurrence of HH:MM in *ref*'s timezone on or after *ref*."""
         candidate = ref.replace(hour=hour, minute=minute, second=0, microsecond=0)
         if candidate <= ref:
             candidate += timedelta(days=1)
@@ -134,7 +148,7 @@ def compute_next_run(frequency: str, after: datetime | None = None) -> datetime:
     # daily@HH:MM
     m = re.fullmatch(r"daily@(\d{2}):(\d{2})", frequency)
     if m:
-        return _next_time_of_day(base, int(m.group(1)), int(m.group(2)))
+        return _next_time_of_day(base, int(m.group(1)), int(m.group(2))).astimezone(UTC)
 
     # weekdays@HH:MM
     m = re.fullmatch(r"weekdays@(\d{2}):(\d{2})", frequency)
@@ -143,7 +157,7 @@ def compute_next_run(frequency: str, after: datetime | None = None) -> datetime:
         candidate = _next_time_of_day(base, hour, minute)
         while candidate.weekday() >= _WEEKEND_START:  # advance past Sat/Sun
             candidate += timedelta(days=1)
-        return candidate
+        return candidate.astimezone(UTC)
 
     # weekly:DAY@HH:MM
     m = re.fullmatch(r"weekly:(\w+)@(\d{2}):(\d{2})", frequency)
@@ -153,7 +167,7 @@ def compute_next_run(frequency: str, after: datetime | None = None) -> datetime:
         candidate = _next_time_of_day(base, hour, minute)
         while candidate.weekday() != target_day:
             candidate += timedelta(days=1)
-        return candidate
+        return candidate.astimezone(UTC)
 
     msg = f"Unrecognised frequency format: {frequency!r}"
     raise ValueError(msg)
@@ -262,6 +276,7 @@ def loop_create(  # noqa: PLR0913
     output_channel: int,
     target: str = "",
     model: str = "",
+    timezone: str = "UTC",
 ) -> str:
     """Create a new loop.
 
@@ -274,6 +289,8 @@ def loop_create(  # noqa: PLR0913
         target: Optional mention prepended to the response, e.g. ``"@everyone"``
                 or ``"<@123456789>"``.
         model: Optional model override; empty string means use the bot's default.
+        timezone: IANA timezone name for time-of-day scheduling, e.g.
+                  ``"America/Chicago"``. Defaults to ``"UTC"``.
 
     Returns:
         Success message with the new loop id, or an error description.
@@ -287,7 +304,7 @@ def loop_create(  # noqa: PLR0913
             "Examples: 'every:15m', 'daily@08:00', 'weekdays@09:00', 'weekly:monday@08:00'."
         )
     try:
-        next_run = compute_next_run(frequency)
+        next_run = compute_next_run(frequency, timezone=timezone)
         loop_id = store.create_loop(
             name=name,
             frequency=frequency,
@@ -296,6 +313,7 @@ def loop_create(  # noqa: PLR0913
             next_run=next_run,
             target=target,
             model=model,
+            timezone=timezone,
         )
     except Exception as exc:
         logger.exception("loop_create failed")
@@ -306,7 +324,7 @@ def loop_create(  # noqa: PLR0913
     )
 
 
-def loop_update(  # noqa: C901, PLR0913
+def loop_update(  # noqa: C901, PLR0912, PLR0913
     loop_id: int,
     name: str = "",
     frequency: str = "",
@@ -314,11 +332,12 @@ def loop_update(  # noqa: C901, PLR0913
     output_channel: int = 0,
     target: str = "",
     model: str = "",
+    timezone: str = "",
 ) -> str:
     """Update fields on an existing loop.
 
-    Only non-empty / non-zero arguments are applied. If *frequency* is updated,
-    *next_run* is automatically recomputed.
+    Only non-empty / non-zero arguments are applied. If *frequency* or
+    *timezone* is updated, *next_run* is automatically recomputed.
 
     Args:
         loop_id: The id of the loop to update.
@@ -328,6 +347,7 @@ def loop_update(  # noqa: C901, PLR0913
         output_channel: New channel id (pass 0 to keep current).
         target: New mention string (pass empty string to keep current).
         model: New model override (pass empty string to keep current).
+        timezone: New IANA timezone name (leave empty to keep current).
 
     Returns:
         Success message or an error description.
@@ -338,14 +358,6 @@ def loop_update(  # noqa: C901, PLR0913
     fields: dict[str, Any] = {}
     if name:
         fields["name"] = name
-    if frequency:
-        if not is_valid_frequency(frequency):
-            return (
-                f"Error: '{frequency}' is not a recognised frequency. "
-                "Examples: 'every:15m', 'daily@08:00', 'weekdays@09:00', 'weekly:monday@08:00'."
-            )
-        fields["frequency"] = frequency
-        fields["next_run"] = compute_next_run(frequency).strftime("%Y-%m-%dT%H:%M:%S")
     if prompt:
         fields["prompt"] = prompt
     if output_channel:
@@ -354,6 +366,25 @@ def loop_update(  # noqa: C901, PLR0913
         fields["target"] = target
     if model:
         fields["model"] = model
+    if timezone:
+        fields["timezone"] = timezone
+    if frequency:
+        if not is_valid_frequency(frequency):
+            return (
+                f"Error: '{frequency}' is not a recognised frequency. "
+                "Examples: 'every:15m', 'daily@08:00', 'weekdays@09:00', 'weekly:monday@08:00'."
+            )
+        fields["frequency"] = frequency
+    if frequency or timezone:
+        # Recompute next_run with the resolved frequency and timezone
+        lp = store.get_loop(loop_id)
+        if lp is None:
+            return f"Error: Loop id={loop_id} not found."
+        effective_freq = fields.get("frequency", lp["frequency"])
+        effective_tz = fields.get("timezone", lp["timezone"])
+        fields["next_run"] = compute_next_run(
+            effective_freq, timezone=effective_tz
+        ).strftime("%Y-%m-%dT%H:%M:%S")
     if not fields:
         return "No fields to update were provided."
     updated = store.update_loop(loop_id, **fields)
@@ -394,7 +425,7 @@ def loop_enable(loop_id: int) -> str:
     lp = store.get_loop(loop_id)
     if lp is None:
         return f"Error: Loop id={loop_id} not found."
-    next_run = compute_next_run(lp["frequency"])
+    next_run = compute_next_run(lp["frequency"], timezone=lp["timezone"])
     store.update_loop(
         loop_id,
         enabled=1,
@@ -491,11 +522,12 @@ def loop_update_self(  # noqa: PLR0913
     output_channel: int = 0,
     target: str = "",
     model: str = "",
+    timezone: str = "",
 ) -> str:
     """Update fields on the currently-executing loop.
 
-    Only non-empty / non-zero arguments are applied. If *frequency* is updated,
-    *next_run* is automatically recomputed.
+    Only non-empty / non-zero arguments are applied. If *frequency* or
+    *timezone* is updated, *next_run* is automatically recomputed.
 
     Args:
         name: New human-readable name (leave empty to keep current).
@@ -504,6 +536,7 @@ def loop_update_self(  # noqa: PLR0913
         output_channel: New channel id (pass 0 to keep current).
         target: New mention string (pass empty string to keep current).
         model: New model override (pass empty string to keep current).
+        timezone: New IANA timezone name (leave empty to keep current).
 
     Returns:
         Success message or an error description.
@@ -519,6 +552,7 @@ def loop_update_self(  # noqa: PLR0913
         output_channel=output_channel,
         target=target,
         model=model,
+        timezone=timezone,
     )
 
 
@@ -574,10 +608,11 @@ LOOP_TOOLS: list[dict[str, Any]] = [
             "description": (
                 "Create a new scheduled loop that runs an LLM prompt at a fixed interval "
                 "and posts the result to a Discord channel. "
-                "Frequency format (all times UTC): "
+                "Frequency format: "
                 "'every:15m' = every 15 minutes, 'every:2h' = every 2 hours, "
                 "'daily@08:00' = daily at 8 AM, 'weekdays@08:00' = Mon-Fri at 8 AM, "
-                "'weekly:monday@08:00' = every Monday at 8 AM."
+                "'weekly:monday@08:00' = every Monday at 8 AM. "
+                "Time-of-day frequencies use the 'timezone' field (default UTC)."
             ),
             "parameters": {
                 "type": "object",
@@ -592,14 +627,17 @@ LOOP_TOOLS: list[dict[str, Any]] = [
                             "When to fire the loop. Supported formats: "
                             "'every:Nm' (minutes), 'every:Nh' (hours), 'every:Nd' (days), "
                             "'daily@HH:MM', 'weekdays@HH:MM', 'weekly:DAYNAME@HH:MM'. "
-                            "All times are UTC."
+                            "Time-of-day formats use the 'timezone' field (default UTC)."
                         ),
                     },
                     "prompt": {
                         "type": "string",
                         "description": (
                             "System prompt sent to the LLM each time the loop fires. "
-                            "This should describe what output to generate."
+                            "This should describe what output to generate. "
+                            "If the model decides nothing should be posted (e.g. no relevant "
+                            "data was found), it should respond with exactly 'SKIP' and the "
+                            "message will be suppressed."
                         ),
                     },
                     "output_channel": {
@@ -617,6 +655,14 @@ LOOP_TOOLS: list[dict[str, Any]] = [
                         "type": "string",
                         "description": (
                             "Optional model name override. Leave empty to use the bot's default."
+                        ),
+                    },
+                    "timezone": {
+                        "type": "string",
+                        "description": (
+                            "IANA timezone name for time-of-day scheduling, e.g. "
+                            "'America/Chicago' or 'Europe/London'. Defaults to 'UTC'. "
+                            "Has no effect on interval-based frequencies (every:Nm/h/d)."
                         ),
                     },
                 },
@@ -656,6 +702,13 @@ LOOP_TOOLS: list[dict[str, Any]] = [
                     "model": {
                         "type": "string",
                         "description": "New model override or empty to use default.",
+                    },
+                    "timezone": {
+                        "type": "string",
+                        "description": (
+                            "New IANA timezone name, e.g. 'America/Chicago'. "
+                            "Leave empty to keep current."
+                        ),
                     },
                 },
                 "required": ["loop_id"],
@@ -801,6 +854,13 @@ LOOP_SELF_TOOLS: list[dict[str, Any]] = [
                     "model": {
                         "type": "string",
                         "description": "New model override or empty to use default.",
+                    },
+                    "timezone": {
+                        "type": "string",
+                        "description": (
+                            "New IANA timezone name, e.g. 'America/Chicago'. "
+                            "Leave empty to keep current."
+                        ),
                     },
                 },
                 "required": [],

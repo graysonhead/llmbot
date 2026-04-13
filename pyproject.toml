@@ -24,7 +24,22 @@ classifiers = [
   "Typing :: Typed",
 ]
 
-dependencies = ["anthropic", "caldav", "click", "discord.py", "icalendar", "mcp", "ollama", "requests"]
+dependencies = [
+  "anthropic",
+  "caldav",
+  "click",
+  "discord.py",
+  "fastapi",
+  "google-auth",
+  "google-auth-oauthlib",
+  "icalendar",
+  "jinja2",
+  "mcp",
+  "ollama",
+  "python-multipart",
+  "requests",
+  "uvicorn",
+]
 
 [project.optional-dependencies]
 
@@ -59,7 +74,7 @@ exclude = ["tests*"]
 
 [tool.setuptools.package-data]
 
-llmbot = ["py.typed", "resources/*"]
+llmbot = ["py.typed", "resources/*", "templates/*", "static/*"]
 
 ##########################
 ## PYTEST CONFIGURATION ##

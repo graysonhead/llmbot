@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}Loops — llmbot admin{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h1>Loops</h1>
+  <div class="d-flex gap-2">
+    <form method="post" action="/loops/clear-scheduled">
+      <button type="submit" class="btn btn-outline-warning">Clear Scheduled Runs</button>
+    </form>
+    <a href="/loops/new" class="btn btn-primary">+ New Loop</a>
+  </div>
+</div>
+
+{% if msg %}
+<div class="alert alert-info alert-dismissible fade show" role="alert">
+  {{ msg }}
+  <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+{% endif %}
+
+{% if not loops %}
+  <p class="text-muted">No loops configured yet.</p>
+{% else %}
+<div class="table-responsive">
+  <table class="table table-bordered align-middle">
+    <thead class="table-dark">
+      <tr>
+        <th>Name</th>
+        <th>Frequency</th>
+        <th>Channel</th>
+        <th>Status</th>
+        <th>Last Run</th>
+        <th>Next Run</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for lp in loops %}
+      <tr>
+        <td>
+          <a href="/loops/{{ lp.id }}/edit">{{ lp.name }}</a>
+          {% if lp.model %}<br><small class="text-muted">model: {{ lp.model }}</small>{% endif %}
+        </td>
+        <td><code>{{ lp.frequency }}</code></td>
+        <td><code>{{ lp.output_channel }}</code>{% if lp.target %} <small class="text-muted">{{ lp.target }}</small>{% endif %}</td>
+        <td>
+          {% if lp.enabled %}
+          <span class="badge bg-success">enabled</span>
+          {% else %}
+          <span class="badge bg-secondary">disabled</span>
+          {% endif %}
+        </td>
+        <td><small>{{ lp.last_run or "—" }}</small></td>
+        <td><small>{{ lp.next_run }}</small></td>
+        <td>
+          <div class="d-flex gap-1 flex-wrap">
+            <a href="/loops/{{ lp.id }}/edit" class="btn btn-sm btn-outline-secondary">Edit</a>
+            {% if lp.enabled %}
+            <form method="post" action="/loops/{{ lp.id }}/disable">
+              <button type="submit" class="btn btn-sm btn-outline-warning">Disable</button>
+            </form>
+            {% else %}
+            <form method="post" action="/loops/{{ lp.id }}/enable">
+              <button type="submit" class="btn btn-sm btn-outline-success">Enable</button>
+            </form>
+            {% endif %}
+            <form method="post" action="/loops/{{ lp.id }}/run">
+              <button type="submit" class="btn btn-sm btn-outline-primary"
+                      title="Queue for next scheduler tick">Run Now</button>
+            </form>
+            <form method="post" action="/loops/{{ lp.id }}/delete"
+                  onsubmit="return confirm('Delete loop {{ lp.name }}?')">
+              <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+            </form>
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+{% endblock %}

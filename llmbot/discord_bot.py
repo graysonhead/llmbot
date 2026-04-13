@@ -78,6 +78,8 @@ class LLMBot(commands.Bot):
         self.consolidation_keep_recent = consolidation_keep_recent
         # Tracks which channels have had their summary context loaded
         self._context_loaded: set[int] = set()
+        # Tracks loop IDs currently executing to prevent concurrent re-runs
+        self._running_loops: set[int] = set()
         # Maps channel_id -> {display_name: discord_user_id} for consolidation prompts
         self._channel_users: dict[int, dict[str, int]] = {}
 
@@ -340,12 +342,13 @@ class LLMBot(commands.Bot):
     async def _run_scheduler(self) -> None:
         """Background task: fire loops whose next_run has passed."""
         while True:
-            await asyncio.sleep(60)
+            await asyncio.sleep(1)
             if self.memory_store is None:
                 continue
             now = datetime.now(UTC)
             for loop in self.memory_store.get_due_loops(now):
-                asyncio.create_task(self.execute_loop(loop))  # noqa: RUF006
+                if loop["id"] not in self._running_loops:
+                    asyncio.create_task(self.execute_loop(loop))  # noqa: RUF006
 
     async def execute_loop(self, loop: dict) -> None:  # type: ignore[type-arg]
         """Run one loop iteration: call LLM, post to channel, update timestamps.
@@ -354,6 +357,7 @@ class LLMBot(commands.Bot):
             loop: A loop dict as returned by :meth:`MemoryStore.get_due_loops`.
         """
         loop_id: int = loop["id"]
+        self._running_loops.add(loop_id)
         try:
             raw_channel = self.get_channel(loop["output_channel"])
             if raw_channel is None or not isinstance(
@@ -383,23 +387,34 @@ class LLMBot(commands.Bot):
             event_loop = asyncio.get_event_loop()
             response_text, _ = await event_loop.run_in_executor(None, _run_loop)
 
-            content = response_text
-            if loop["target"]:
-                content = f"{loop['target']} {response_text}"
-
-            discord_msg_limit = 2000
-            if len(content) > discord_msg_limit:
-                chunks = [
-                    content[i : i + discord_msg_limit]
-                    for i in range(0, len(content), discord_msg_limit)
-                ]
-                for chunk in chunks:
-                    await channel.send(chunk)
+            stripped = response_text.strip()
+            if not stripped or stripped.upper() == "SKIP":
+                logger.info(
+                    "Loop %d '%s': model returned %r — skipping post",
+                    loop_id,
+                    loop["name"],
+                    stripped or "(empty)",
+                )
             else:
-                await channel.send(content)
+                content = stripped
+                if loop["target"]:
+                    content = f"{loop['target']} {stripped}"
+
+                discord_msg_limit = 2000
+                if len(content) > discord_msg_limit:
+                    chunks = [
+                        content[i : i + discord_msg_limit]
+                        for i in range(0, len(content), discord_msg_limit)
+                    ]
+                    for chunk in chunks:
+                        await channel.send(chunk)
+                else:
+                    await channel.send(content)
 
             now = datetime.now(UTC)
-            next_run = compute_next_run(loop["frequency"], after=now)
+            next_run = compute_next_run(
+                loop["frequency"], after=now, timezone=loop["timezone"]
+            )
             self.memory_store.update_loop_run(loop_id, now, next_run)  # type: ignore[union-attr]
             logger.info(
                 "Loop %d '%s' executed; next_run=%s",
@@ -410,6 +425,8 @@ class LLMBot(commands.Bot):
 
         except Exception:
             logger.exception("Loop %d execution failed", loop_id)
+        finally:
+            self._running_loops.discard(loop_id)
 
     async def on_message(self, message: discord.Message) -> None:
         """Handle incoming messages."""
@@ -438,7 +455,7 @@ class LLMBot(commands.Bot):
         # Process commands
         await self.process_commands(message)
 
-    async def handle_llm_query(self, message: discord.Message, query: str) -> None:  # noqa: C901, PLR0912
+    async def handle_llm_query(self, message: discord.Message, query: str) -> None:
         """Handle LLM query and respond."""
         channel_id = message.channel.id
         user_name = message.author.display_name
@@ -495,18 +512,9 @@ class LLMBot(commands.Bot):
                         effective_system,
                         model=model_to_use,
                     )
-                    # If tools were used, add the final response to history
-                    if len(full_conversation) > len(messages):
-                        self.conversation_history[channel_id].append(
-                            {
-                                "role": "assistant",
-                                "content": f"Assistant: {response_text}",
-                            }
-                        )
-                    else:
-                        self._add_to_history(
-                            channel_id, "Assistant", response_text, is_bot=True
-                        )
+                    self._add_to_history(
+                        channel_id, "Assistant", response_text, is_bot=True
+                    )
                 else:
                     result = self.backend.api_chat(
                         messages, effective_system, model=model_to_use

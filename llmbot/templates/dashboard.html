@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — llmbot admin{% endblock %}
+{% block content %}
+<h1 class="mb-4">Dashboard</h1>
+<div class="row g-3">
+  <div class="col-sm-4">
+    <div class="card text-center">
+      <div class="card-body">
+        <h2 class="card-title display-4">{{ memory_count }}</h2>
+        <p class="card-text text-muted">Memories</p>
+        <a href="/memories" class="btn btn-sm btn-outline-primary">View</a>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-4">
+    <div class="card text-center">
+      <div class="card-body">
+        <h2 class="card-title display-4">{{ loop_count }}</h2>
+        <p class="card-text text-muted">Loops ({{ active_loop_count }} active)</p>
+        <a href="/loops" class="btn btn-sm btn-outline-primary">View</a>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-4">
+    <div class="card text-center">
+      <div class="card-body">
+        <h2 class="card-title display-4">{{ channel_count }}</h2>
+        <p class="card-text text-muted">Channels</p>
+        <a href="/channels" class="btn btn-sm btn-outline-primary">View</a>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

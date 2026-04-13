@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Channel {{ channel_id }} — llmbot admin{% endblock %}
+{% block content %}
+<div class="d-flex align-items-center mb-3">
+  <a href="/channels" class="btn btn-sm btn-outline-secondary me-3">&larr; Channels</a>
+  <h1 class="mb-0">Channel {{ channel_id }}</h1>
+</div>
+
+<h2 class="h5">Current Summary</h2>
+<div class="card mb-4">
+  <div class="card-body">
+    {% if summary %}
+    <p class="mb-0">{{ summary }}</p>
+    {% else %}
+    <p class="text-muted mb-0">No summary yet.</p>
+    {% endif %}
+  </div>
+</div>
+
+<h2 class="h5">Recent Messages</h2>
+{% if history %}
+<div class="list-group mb-4">
+  {% for msg in history %}
+  <div class="list-group-item">
+    <span class="badge {{ 'bg-primary' if msg.role == 'assistant' else 'bg-secondary' }} me-2">{{ msg.role }}</span>
+    <span>{{ msg.content }}</span>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<p class="text-muted">No recent messages stored.</p>
+{% endif %}
+
+{% if summary_history %}
+<h2 class="h5">Summary History</h2>
+<div class="accordion mb-4" id="summaryHistory">
+  {% for sh in summary_history %}
+  <div class="accordion-item">
+    <h2 class="accordion-header">
+      <button class="accordion-button collapsed" type="button"
+              data-bs-toggle="collapse" data-bs-target="#sh{{ sh.id }}">
+        {{ sh.created_at }} &nbsp;
+        <small class="text-muted ms-2">(after {{ sh.message_count_at_snapshot }} messages)</small>
+      </button>
+    </h2>
+    <div id="sh{{ sh.id }}" class="accordion-collapse collapse">
+      <div class="accordion-body">{{ sh.summary }}</div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+{% endblock %}

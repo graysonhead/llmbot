@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}{{ "Edit" if loop else "New" }} Loop — llmbot admin{% endblock %}
+{% block content %}
+<h1>{{ "Edit" if loop else "New" }} Loop</h1>
+
+{% if error %}
+<div class="alert alert-danger">{{ error }}</div>
+{% endif %}
+
+<form method="post" action="{{ '/loops/' ~ loop.id ~ '/edit' if loop else '/loops/new' }}">
+  <div class="mb-3">
+    <label for="name" class="form-label">Name</label>
+    <input type="text" class="form-control" id="name" name="name"
+           value="{{ loop.name if loop else '' }}" required>
+  </div>
+
+  <div class="mb-3">
+    <label for="frequency" class="form-label">Frequency</label>
+    <input type="text" class="form-control" id="frequency" name="frequency"
+           value="{{ loop.frequency if loop else '' }}" required
+           placeholder="e.g. every:15m, daily@08:00, weekdays@09:00, weekly:monday@08:00">
+    <div class="form-text">
+      Formats: <code>every:15m</code> / <code>every:2h</code> / <code>every:1d</code> /
+      <code>daily@HH:MM</code> / <code>weekdays@HH:MM</code> / <code>weekly:monday@HH:MM</code>
+      (all times UTC)
+    </div>
+  </div>
+
+  <div class="mb-3">
+    <label for="prompt" class="form-label">Prompt</label>
+    <textarea class="form-control" id="prompt" name="prompt" rows="6"
+              required>{{ loop.prompt if loop else "" }}</textarea>
+  </div>
+
+  <div class="mb-3">
+    <label for="output_channel" class="form-label">Output Channel (Discord snowflake)</label>
+    <input type="text" class="form-control" id="output_channel" name="output_channel"
+           value="{{ loop.output_channel if loop else '' }}" required>
+  </div>
+
+  <div class="mb-3">
+    <label for="target" class="form-label">Target mention (optional)</label>
+    <input type="text" class="form-control" id="target" name="target"
+           value="{{ loop.target if loop else '' }}"
+           placeholder="e.g. @everyone or &lt;@userid&gt;">
+  </div>
+
+  <div class="mb-3">
+    <label for="model" class="form-label">Model override (optional)</label>
+    <input type="text" class="form-control" id="model" name="model"
+           value="{{ loop.model if loop else '' }}"
+           placeholder="Leave blank to use the bot default">
+  </div>
+
+  <button type="submit" class="btn btn-primary">Save</button>
+  <a href="/loops" class="btn btn-secondary ms-2">Cancel</a>
+</form>
+{% endblock %}

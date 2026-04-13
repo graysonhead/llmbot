@@ -63,15 +63,22 @@
           '';
 
           ## Specify production dependencies:
-          propagatedBuildInputs = with pkgs.python3Packages; [
+          propagatedBuildInputs = (with pkgs.python3Packages; [
             anthropic
             caldav
             click
             discordpy
+            fastapi
             icalendar
+            jinja2
             mcp
             ollama
+            python-multipart
             requests
+            uvicorn
+          ]) ++ [
+            pkgs.python3Packages."google-auth"
+            pkgs.python3Packages."google-auth-oauthlib"
           ];
         };
 

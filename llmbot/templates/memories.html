@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Memories — llmbot admin{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h1>Memories</h1>
+  <a href="/memories/new" class="btn btn-primary">+ New Memory</a>
+</div>
+
+{% if not grouped %}
+  <p class="text-muted">No memories stored yet.</p>
+{% else %}
+  {% for user_id, mems in grouped.items() %}
+  <div class="card mb-4">
+    <div class="card-header">
+      <strong>User {{ user_id }}</strong>
+      <span class="badge bg-secondary ms-2">{{ mems|length }} memories</span>
+    </div>
+    <div class="list-group list-group-flush">
+      {% for mem in mems %}
+      <div class="list-group-item">
+        <div class="d-flex justify-content-between align-items-start">
+          <div class="flex-grow-1">
+            <span class="badge bg-info text-dark me-1">{{ mem.category }}</span>
+            {% for tag in mem.tags %}
+            <span class="badge bg-light text-dark border me-1">{{ tag }}</span>
+            {% endfor %}
+            <p class="mt-1 mb-1">{{ mem.content }}</p>
+            <small class="text-muted">
+              Created: {{ mem.created_at }} &nbsp;|&nbsp;
+              Accessed: {{ mem.last_accessed }} ({{ mem.access_count }}x)
+            </small>
+          </div>
+          <div class="ms-3 d-flex gap-1">
+            <a href="/memories/{{ mem.id }}/edit" class="btn btn-sm btn-outline-secondary">Edit</a>
+            <form method="post" action="/memories/{{ mem.id }}/delete"
+                  onsubmit="return confirm('Delete this memory?')">
+              <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+            </form>
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endfor %}
+{% endif %}
+{% endblock %}

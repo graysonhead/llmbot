@@ -347,7 +347,7 @@ class TestGetTaf:
         assert "John F Kennedy Intl" in result
         assert "KJFK 101730Z" in result
         assert "Forecast Periods:" in result
-        assert "2024-01-10T18:00:00Z" in result
+        assert "From:" in result
 
     def test_get_taf_no_data(self):
         """Test that empty response returns appropriate error message."""
