@@ -155,7 +155,7 @@ class LLMBot(commands.Bot):
     ) -> str:
         """Format a message with user identification."""
         if is_bot:
-            return f"I said: {content}"
+            return content
         return f"{user_name}: {content}"
 
     def _add_to_history(
