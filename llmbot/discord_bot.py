@@ -46,7 +46,7 @@ class LLMBot(commands.Bot):
         *,
         enable_mcp_tools: bool = True,
         memory_store: "MemoryStore | None" = None,
-        consolidation_interval: int = 20,
+        consolidation_threshold: float = 0.6,
         consolidation_keep_recent: int = 20,
     ) -> None:
         """Initialize the bot with a configured LLM backend.
@@ -61,7 +61,7 @@ class LLMBot(commands.Bot):
             context_trim_threshold: Fraction of context_length at which to trim.
             enable_mcp_tools: Whether to enable tool calling.
             memory_store: Optional SQLite-backed memory/summary store.
-            consolidation_interval: Messages between memory consolidations.
+            consolidation_threshold: Fraction of context_length at which to consolidate history.
             consolidation_keep_recent: Raw messages to keep after consolidation.
         """
         intents = discord.Intents.default()
@@ -74,7 +74,7 @@ class LLMBot(commands.Bot):
         self.context_trim_threshold = context_trim_threshold
         self.enable_mcp_tools = enable_mcp_tools
         self.memory_store = memory_store
-        self.consolidation_interval = consolidation_interval
+        self.consolidation_threshold = consolidation_threshold
         self.consolidation_keep_recent = consolidation_keep_recent
         # Tracks which channels have had their summary context loaded
         self._context_loaded: set[int] = set()
@@ -118,6 +118,8 @@ class LLMBot(commands.Bot):
             "for context. Make sure you are adding future events in the current year unless "
             "otherwise specified. And always ask for clarification if it isn't exactly clear "
             "when things are supposed to be scheduled."
+            "IMPORTANT: You are incapable of creating, modifying, or deleting calendar entries or tasks without calling the appropriate tool. "
+            "You MUST call the tool first. If you lack information needed to call the tool, ask the user — never claim an action was performed without a successful tool call."
         )
 
         # Append additional system message if provided
@@ -203,21 +205,7 @@ class LLMBot(commands.Bot):
         if channel_id not in self.conversation_history:
             self.conversation_history[channel_id] = []
 
-        prefix: list[dict[str, str]] = []
-        if summary:
-            prefix = [
-                {
-                    "role": "user",
-                    "content": f"[Conversation summary from previous sessions: {summary}]",
-                },
-                {
-                    "role": "assistant",
-                    "content": "Understood, I have context from our previous conversations.",
-                },
-            ]
-
         self.conversation_history[channel_id] = [
-            *prefix,
             *raw,
             *self.conversation_history[channel_id],
         ]
@@ -229,11 +217,14 @@ class LLMBot(commands.Bot):
         )
 
     def _maybe_consolidate(self, channel_id: int) -> None:
-        """Trigger memory consolidation when the message count threshold is reached."""
+        """Trigger memory consolidation when history exceeds the token threshold."""
         if self.memory_store is None:
             return
-        count = self.memory_store.increment_message_count(channel_id)
-        if count % self.consolidation_interval == 0:
+        self.memory_store.increment_message_count(channel_id)
+        history = self.conversation_history.get(channel_id, [])
+        history_tokens = sum(self._estimate_tokens(msg["content"]) for msg in history)
+        token_threshold = int(self.context_length * self.consolidation_threshold)
+        if history_tokens >= token_threshold:
             self._run_consolidation(channel_id)
 
     def _run_consolidation(self, channel_id: int) -> None:
@@ -490,13 +481,23 @@ class LLMBot(commands.Bot):
         # Safety trim in case we're still over the token budget after consolidation
         self._trim_history_if_needed(channel_id)
 
-        # Build effective system prompt, injecting any stored memories for this user
+        # Build effective system prompt, injecting channel summary and user memories
         effective_system = self.system_message
         if self.memory_store is not None:
+            summary = self.memory_store.get_summary(channel_id)
             memories = self.memory_store.get_memories_for_user(message.author.id)
             memory_text = self.memory_store.format_memories_for_prompt(memories)
-            if memory_text:
-                effective_system = f"{self.system_message}\n\n{memory_text}"
+            extra = "\n\n".join(
+                filter(
+                    None,
+                    [
+                        f"[Prior conversation summary: {summary}]" if summary else None,
+                        memory_text or None,
+                    ],
+                )
+            )
+            if extra:
+                effective_system = f"{self.system_message}\n\n{extra}"
 
         # Show typing indicator for the entire process
         async with message.channel.typing():
@@ -576,7 +577,7 @@ async def start_discord_bot(  # noqa: PLR0913
     context_trim_threshold: float = 0.8,
     enable_mcp_tools: bool = True,
     memory_store: "MemoryStore | None" = None,
-    consolidation_interval: int = 20,
+    consolidation_threshold: float = 0.6,
     consolidation_keep_recent: int = 20,
 ) -> None:
     """Start the Discord bot.
@@ -592,7 +593,7 @@ async def start_discord_bot(  # noqa: PLR0913
         context_trim_threshold: Fraction of context_length at which to trim.
         enable_mcp_tools: Whether to enable tool calling.
         memory_store: Optional SQLite-backed memory/summary store.
-        consolidation_interval: Messages between memory consolidations.
+        consolidation_threshold: Fraction of context_length at which to consolidate history.
         consolidation_keep_recent: Raw messages to keep after consolidation.
     """
     bot = LLMBot(
@@ -605,7 +606,7 @@ async def start_discord_bot(  # noqa: PLR0913
         context_trim_threshold,
         enable_mcp_tools=enable_mcp_tools,
         memory_store=memory_store,
-        consolidation_interval=consolidation_interval,
+        consolidation_threshold=consolidation_threshold,
         consolidation_keep_recent=consolidation_keep_recent,
     )
 

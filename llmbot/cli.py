@@ -176,10 +176,10 @@ def query(  # noqa: PLR0913
     help="SQLite memory DB path (default: ~/.local/share/llmbot/memory.db)",
 )
 @click.option(
-    "--consolidation-interval",
-    default=20,
-    envvar="CONSOLIDATION_INTERVAL",
-    help="Number of messages between memory consolidations (also reads CONSOLIDATION_INTERVAL)",
+    "--consolidation-threshold",
+    default=0.6,
+    envvar="CONSOLIDATION_THRESHOLD",
+    help="Fraction of context_length at which to consolidate history (also reads CONSOLIDATION_THRESHOLD)",
 )
 @click.option(
     "--no-memory", is_flag=True, help="Disable persistent memory and summaries"
@@ -213,7 +213,7 @@ def discord(  # noqa: C901, PLR0913
     api_key: str | None,
     context_length: int,
     db_path: str | None,
-    consolidation_interval: int,
+    consolidation_threshold: int,
     no_memory: bool,
     no_webui: bool,
     webui_host: str,
@@ -276,7 +276,7 @@ def discord(  # noqa: C901, PLR0913
         context_length=context_length,
         enable_mcp_tools=not no_tools,
         memory_store=memory_store,
-        consolidation_interval=consolidation_interval,
+        consolidation_threshold=consolidation_threshold,
     )
 
     click.echo("Starting Discord bot...")
