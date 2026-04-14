@@ -652,7 +652,7 @@ def chat_with_tools(
     system: str,
     model: str | None = None,
     tools: list[dict[str, Any]] | None = None,
-) -> tuple[str, list[dict[str, Any]]]:
+) -> tuple[str, list[dict[str, Any]], list[dict[str, Any]]]:
     """Chat using built-in tools with any LLM backend.
 
     Args:
@@ -663,19 +663,21 @@ def chat_with_tools(
         tools: Tool definitions to expose; defaults to the full :data:`TOOLS` list.
 
     Returns:
-        Tuple of (final response text, complete conversation with tool calls).
+        Tuple of (final response text, complete conversation with tool calls,
+        tool call log as list of {name, arguments, result} dicts).
     """
     active_tools = TOOLS if tools is None else tools
     if not active_tools:
         logger.info("No tools available, using regular chat")
         response = backend.api_chat(messages, system, model=model)
-        return backend.extract_text(response), messages
+        return backend.extract_text(response), messages, []
 
     backend_tools = backend.normalize_tools(active_tools)
     logger.info(
         "Sending message to backend with %d tools available", len(backend_tools)
     )
 
+    tool_log: list[dict[str, Any]] = []
     conversation = messages.copy()
     response = backend.api_chat(conversation, system, tools=backend_tools, model=model)
 
@@ -691,6 +693,13 @@ def chat_with_tools(
             logger.info("Executing tool call: %s(%s)", tc["name"], tc["arguments"])
             tool_result = call_tool(tc["name"], tc["arguments"])
             conversation.append(backend.make_tool_result_message(tc["id"], tool_result))
+            tool_log.append(
+                {
+                    "name": tc["name"],
+                    "arguments": tc["arguments"],
+                    "result": tool_result,
+                }
+            )
 
         logger.info("Sending conversation with tool results back to backend")
         response = backend.api_chat(
@@ -702,4 +711,4 @@ def chat_with_tools(
             _MAX_TOOL_ITERATIONS,
         )
 
-    return backend.extract_text(response), conversation
+    return backend.extract_text(response), conversation, tool_log

@@ -105,7 +105,7 @@ def query(  # noqa: PLR0913
             response = llm_backend.extract_text(result)
         else:
             set_tool_config(searxng_url)
-            response, _ = chat_with_tools(messages, llm_backend, system)
+            response, _, _tl = chat_with_tools(messages, llm_backend, system)
         click.echo(response)
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
@@ -267,6 +267,11 @@ def discord(  # noqa: C901, PLR0913
         memory_store.initialize()
         click.echo(f"Memory store initialized at {resolved_db_path}")
 
+    webui_url = (
+        f"http://{webui_host}:{webui_port}"
+        if not no_webui and memory_store is not None
+        else None
+    )
     bot_coro = start_discord_bot(
         discord_token,
         llm_backend,
@@ -277,6 +282,7 @@ def discord(  # noqa: C901, PLR0913
         enable_mcp_tools=not no_tools,
         memory_store=memory_store,
         consolidation_threshold=consolidation_threshold,
+        webui_url=webui_url,
     )
 
     click.echo("Starting Discord bot...")

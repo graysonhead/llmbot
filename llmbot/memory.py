@@ -61,6 +61,14 @@ CREATE TABLE IF NOT EXISTS loops (
     next_run       DATETIME NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_loops_next_run ON loops(next_run, enabled);
+
+CREATE TABLE IF NOT EXISTS tool_call_logs (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel_id  INTEGER NOT NULL,
+    created_at  DATETIME NOT NULL DEFAULT (datetime('now')),
+    tool_calls  TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_tool_call_logs_channel ON tool_call_logs(channel_id);
 """
 
 
@@ -325,6 +333,37 @@ class MemoryStore:
             return data if isinstance(data, list) else []
         except json.JSONDecodeError:
             return []
+
+    # ------------------------------------------------------------------
+    # Tool call logs
+    # ------------------------------------------------------------------
+
+    def save_tool_call_log(
+        self, channel_id: int, tool_calls: list[dict[str, Any]]
+    ) -> int:
+        """Persist a tool call log entry and return its id."""
+        with self._connect() as conn:
+            cur = conn.execute(
+                "INSERT INTO tool_call_logs(channel_id, tool_calls) VALUES(?, ?)",
+                (channel_id, json.dumps(tool_calls)),
+            )
+            return cur.lastrowid  # type: ignore[return-value]
+
+    def get_tool_call_log(self, log_id: int) -> dict[str, Any] | None:
+        """Return a tool call log entry by id, or None if not found."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT id, channel_id, created_at, tool_calls FROM tool_call_logs WHERE id = ?",
+                (log_id,),
+            ).fetchone()
+        if not row:
+            return None
+        return {
+            "id": row[0],
+            "channel_id": row[1],
+            "created_at": row[2],
+            "tool_calls": json.loads(row[3]),
+        }
 
     def format_memories_for_prompt(self, memories: list[dict[str, Any]]) -> str:
         """Format memories as a block for injection into the system prompt."""

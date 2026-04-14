@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Tool Calls #{{ log.id }} — llmbot admin{% endblock %}
+{% block content %}
+<div class="d-flex align-items-center mb-3">
+  <h1 class="mb-0">Tool Calls #{{ log.id }}</h1>
+</div>
+
+<p class="text-muted">Channel: {{ log.channel_id }} &mdash; {{ log.created_at }}</p>
+
+{% if log.tool_calls %}
+{% for tc in log.tool_calls %}
+<div class="card mb-3">
+  <div class="card-header d-flex align-items-center">
+    <span class="badge bg-primary me-2">{{ loop.index }}</span>
+    <strong>{{ tc.name }}</strong>
+  </div>
+  <div class="card-body">
+    <h6 class="text-muted">Arguments</h6>
+    <pre class="bg-light p-2 rounded mb-3"><code>{{ tc.arguments | tojson(indent=2) }}</code></pre>
+    <h6 class="text-muted">Result</h6>
+    <pre class="bg-light p-2 rounded mb-0"><code>{{ tc.result }}</code></pre>
+  </div>
+</div>
+{% endfor %}
+{% else %}
+<p class="text-muted">No tool calls recorded.</p>
+{% endif %}
+{% endblock %}

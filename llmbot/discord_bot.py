@@ -48,6 +48,7 @@ class LLMBot(commands.Bot):
         memory_store: "MemoryStore | None" = None,
         consolidation_threshold: float = 0.6,
         consolidation_keep_recent: int = 20,
+        webui_url: str | None = None,
     ) -> None:
         """Initialize the bot with a configured LLM backend.
 
@@ -63,6 +64,7 @@ class LLMBot(commands.Bot):
             memory_store: Optional SQLite-backed memory/summary store.
             consolidation_threshold: Fraction of context_length at which to consolidate history.
             consolidation_keep_recent: Raw messages to keep after consolidation.
+            webui_url: Base URL of the web UI (e.g. http://localhost:8080) for tool call log links.
         """
         intents = discord.Intents.default()
         intents.message_content = True
@@ -76,6 +78,7 @@ class LLMBot(commands.Bot):
         self.memory_store = memory_store
         self.consolidation_threshold = consolidation_threshold
         self.consolidation_keep_recent = consolidation_keep_recent
+        self.webui_url = webui_url
         # Tracks which channels have had their summary context loaded
         self._context_loaded: set[int] = set()
         # Tracks loop IDs currently executing to prevent concurrent re-runs
@@ -97,8 +100,8 @@ class LLMBot(commands.Bot):
             "Try to differentiate between users by addressing them by name when "
             "appropriate and maintaining awareness of who said what in the "
             "conversation context. "
-            '"Darkside"\'s real name is Grayson Head, and "maeroselastic" is Maerose Head '
-            "they are husband and wife respectively, and have two children Wyatt and Owen "
+            '"Darkside"\'s real name is Grayson Head, and "maeroselastic" is Maerose Head. '
+            "They are husband and wife respectively, and have two children Wyatt and Owen. "
             "You have access to tools that can provide real-time information. "
             "When you use a tool, you will receive the result and should provide "
             "that information to the user along with any relevant explanation. "
@@ -108,16 +111,16 @@ class LLMBot(commands.Bot):
             "description below. Please include a description for all non-null "
             "attributes. "
             "When asked to search for things on the web, always search for "
-            "multiple sources, and provide links to any sources you site."
+            "multiple sources, and provide links to any sources you cite. "
             "If the user asks you to modify or delete a calendar entry, you may "
             "have to query for the events again to get the UID and modify or "
             "delete them. Always ask for confirmation before deleting something or "
-            "modifying something if the request is not crystal clear."
+            "modifying something if the request is not crystal clear. "
             "If the user doesn't specify a timezone when discussing calendar "
             "events assume CST/CDT as appropriate. Always check the current date and time "
             "for context. Make sure you are adding future events in the current year unless "
             "otherwise specified. And always ask for clarification if it isn't exactly clear "
-            "when things are supposed to be scheduled."
+            "when things are supposed to be scheduled. "
             "IMPORTANT: You are incapable of creating, modifying, or deleting calendar entries or tasks without calling the appropriate tool. "
             "You MUST call the tool first. If you lack information needed to call the tool, ask the user — never claim an action was performed without a successful tool call."
         )
@@ -325,6 +328,15 @@ class LLMBot(commands.Bot):
                 total_tokens,
             )
 
+    def _append_tool_log_link(
+        self, channel_id: int, response_text: str, tool_log: list[dict[str, Any]]
+    ) -> str:
+        """Save tool call log and append a web UI link to the response if configured."""
+        if tool_log and self.memory_store is not None and self.webui_url is not None:
+            log_id = self.memory_store.save_tool_call_log(channel_id, tool_log)
+            response_text += f"\n-# [tool calls]({self.webui_url}/tool-calls/{log_id})"
+        return response_text
+
     async def on_ready(self) -> None:
         """Handle bot ready event."""
         asyncio.create_task(self._run_scheduler())  # noqa: RUF006
@@ -365,13 +377,14 @@ class LLMBot(commands.Bot):
             def _run_loop() -> tuple[str, list[dict[str, Any]]]:
                 set_current_loop(loop)
                 try:
-                    return chat_with_tools(
+                    text, conv, _tl = chat_with_tools(
                         [{"role": "user", "content": "Run your scheduled task now."}],
                         self.backend,
                         loop["prompt"],
                         model=loop["model"] or None,
                         tools=LOOP_EXECUTION_TOOLS,
                     )
+                    return text, conv
                 finally:
                     clear_current_loop()
 
@@ -507,11 +520,14 @@ class LLMBot(commands.Bot):
 
                 # Use backend with or without tools
                 if self.enable_mcp_tools:
-                    response_text, full_conversation = chat_with_tools(
+                    response_text, full_conversation, tool_log = chat_with_tools(
                         messages,
                         self.backend,
                         effective_system,
                         model=model_to_use,
+                    )
+                    response_text = self._append_tool_log_link(
+                        channel_id, response_text, tool_log
                     )
                     self._add_to_history(
                         channel_id, "Assistant", response_text, is_bot=True
@@ -579,6 +595,7 @@ async def start_discord_bot(  # noqa: PLR0913
     memory_store: "MemoryStore | None" = None,
     consolidation_threshold: float = 0.6,
     consolidation_keep_recent: int = 20,
+    webui_url: str | None = None,
 ) -> None:
     """Start the Discord bot.
 
@@ -595,6 +612,7 @@ async def start_discord_bot(  # noqa: PLR0913
         memory_store: Optional SQLite-backed memory/summary store.
         consolidation_threshold: Fraction of context_length at which to consolidate history.
         consolidation_keep_recent: Raw messages to keep after consolidation.
+        webui_url: Base URL of the web UI for tool call log links.
     """
     bot = LLMBot(
         backend,
@@ -608,6 +626,7 @@ async def start_discord_bot(  # noqa: PLR0913
         memory_store=memory_store,
         consolidation_threshold=consolidation_threshold,
         consolidation_keep_recent=consolidation_keep_recent,
+        webui_url=webui_url,
     )
 
     # For Ollama backends, verify the context length before starting

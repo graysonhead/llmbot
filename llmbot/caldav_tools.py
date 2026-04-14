@@ -45,7 +45,7 @@ def _get_connection(
     if missing:
         msg = f"Missing CalDAV environment variables: {', '.join(missing)}"
         raise ValueError(msg)
-    client = caldav.DAVClient(url=url, username=username, password=password)
+    client = caldav.DAVClient(url=url, username=username, password=password, timeout=10)
     return client, client.principal()
 
 

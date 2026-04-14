@@ -331,6 +331,32 @@ def _channel_router(
 
 
 # ------------------------------------------------------------------
+# Tool call logs router
+# ------------------------------------------------------------------
+
+
+def _tool_call_log_router(
+    memory_store: MemoryStore,
+    templates: Jinja2Templates,
+) -> APIRouter:
+    """Build and return the /tool-calls API router."""
+    router = APIRouter(prefix="/tool-calls")
+
+    @router.get("/{log_id}", response_class=HTMLResponse)
+    async def tool_call_detail(request: Request, log_id: int) -> HTMLResponse:
+        """Show tool calls and results for a single interaction."""
+        log = memory_store.get_tool_call_log(log_id)
+        if log is None:
+            return HTMLResponse("Tool call log not found", status_code=404)
+        return templates.TemplateResponse(
+            "tool_call_detail.html",
+            {"request": request, "log": log},
+        )
+
+    return router
+
+
+# ------------------------------------------------------------------
 # App factory
 # ------------------------------------------------------------------
 
@@ -381,5 +407,6 @@ def create_app(memory_store: MemoryStore) -> FastAPI:
     app.include_router(_memory_router(memory_store, templates))
     app.include_router(_loop_router(memory_store, templates))
     app.include_router(_channel_router(memory_store, templates))
+    app.include_router(_tool_call_log_router(memory_store, templates))
 
     return app
