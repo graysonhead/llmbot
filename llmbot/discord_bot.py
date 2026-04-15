@@ -4,6 +4,13 @@ import asyncio
 import logging
 import re
 from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
+
+_LOCAL_TZ = ZoneInfo("America/Chicago")
+
+
+def _now_local_str() -> str:
+    return datetime.now(_LOCAL_TZ).strftime("%A, %Y-%m-%d %H:%M %Z")
 from typing import TYPE_CHECKING, Any
 
 import discord  # type: ignore[import-not-found]
@@ -117,8 +124,9 @@ class LLMBot(commands.Bot):
             "delete them. Always ask for confirmation before deleting something or "
             "modifying something if the request is not crystal clear. "
             "If the user doesn't specify a timezone when discussing calendar "
-            "events assume CST/CDT as appropriate. Always check the current date and time "
-            "for context. Make sure you are adding future events in the current year unless "
+            "events assume CST/CDT as appropriate. The current date and time is provided "
+            "in your system prompt — use it as your authoritative source and do not call "
+            "a tool to look it up. Make sure you are adding future events in the current year unless "
             "otherwise specified. And always ask for clarification if it isn't exactly clear "
             "when things are supposed to be scheduled. "
             "IMPORTANT: You are incapable of creating, modifying, or deleting calendar entries or tasks without calling the appropriate tool. "
@@ -374,13 +382,15 @@ class LLMBot(commands.Bot):
                 return
             channel: discord.abc.Messageable = raw_channel
 
+            loop_system = f"{loop['prompt']}\n\nCurrent date and time (authoritative — trust this): {_now_local_str()}"
+
             def _run_loop() -> tuple[str, list[dict[str, Any]]]:
                 set_current_loop(loop)
                 try:
                     text, conv, _tl = chat_with_tools(
                         [{"role": "user", "content": "Run your scheduled task now."}],
                         self.backend,
-                        loop["prompt"],
+                        loop_system,
                         model=loop["model"] or None,
                         tools=LOOP_EXECUTION_TOOLS,
                     )
@@ -495,7 +505,7 @@ class LLMBot(commands.Bot):
         self._trim_history_if_needed(channel_id)
 
         # Build effective system prompt, injecting channel summary and user memories
-        effective_system = self.system_message
+        effective_system = f"{self.system_message}\n\nCurrent date and time (authoritative — trust this): {_now_local_str()}"
         if self.memory_store is not None:
             summary = self.memory_store.get_summary(channel_id)
             memories = self.memory_store.get_memories_for_user(message.author.id)
@@ -510,7 +520,7 @@ class LLMBot(commands.Bot):
                 )
             )
             if extra:
-                effective_system = f"{self.system_message}\n\n{extra}"
+                effective_system = f"{self.system_message}\n\n{extra}\n\nCurrent date and time (authoritative — trust this): {_now_local_str()}"
 
         # Show typing indicator for the entire process
         async with message.channel.typing():
