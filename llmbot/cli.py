@@ -200,7 +200,13 @@ def query(  # noqa: PLR0913
     help="Web UI bind port (also reads WEBUI_PORT)",
     show_default=True,
 )
-def discord(  # noqa: C901, PLR0913
+@click.option(
+    "--webui-url",
+    default=None,
+    envvar="WEBUI_URL",
+    help="Override base URL for web UI links in Discord messages (also reads WEBUI_URL)",
+)
+def discord(  # noqa: C901, PLR0912, PLR0913, PLR0915
     host: str,
     model: str | None,
     searxng_url: str,
@@ -218,6 +224,7 @@ def discord(  # noqa: C901, PLR0913
     no_webui: bool,
     webui_host: str,
     webui_port: int,
+    webui_url: str | None,
 ) -> None:
     """Start the Discord bot."""
     discord_token = os.getenv("DISCORD_BOT_TOKEN")
@@ -267,11 +274,14 @@ def discord(  # noqa: C901, PLR0913
         memory_store.initialize()
         click.echo(f"Memory store initialized at {resolved_db_path}")
 
-    webui_url = (
-        f"http://{webui_host}:{webui_port}"
-        if not no_webui and memory_store is not None
-        else None
-    )
+    if memory_store is None:
+        webui_url = None
+    elif webui_url is not None:
+        pass  # use the override as-is
+    elif not no_webui:
+        webui_url = f"http://{webui_host}:{webui_port}"
+    else:
+        webui_url = None
     bot_coro = start_discord_bot(
         discord_token,
         llm_backend,
