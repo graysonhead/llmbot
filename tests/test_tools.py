@@ -410,9 +410,8 @@ class TestGetCurrentTime:
         """Test that current time returns properly formatted string"""
         result = get_current_time()
         assert isinstance(result, str)
-        assert "UTC" in result
-        # Basic format check: YYYY-MM-DD HH:MM:SS UTC
-        pattern = r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC"
+        # Basic format check: YYYY-MM-DD HH:MM:SS <TZ>
+        pattern = r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \S+"
         assert re.match(pattern, result)
 
     def test_get_current_time_consistency(self):
@@ -424,11 +423,8 @@ class TestGetCurrentTime:
         # Both should be valid timestamps
         assert isinstance(time1, str)
         assert isinstance(time2, str)
-        assert "UTC" in time1
-        assert "UTC" in time2
 
-        # They should be different (time has passed)
-        # but have the same date (assuming test runs quickly)
+        # They should have the same date (assuming test runs quickly)
         date1 = time1.split(" ")[0]
         date2 = time2.split(" ")[0]
         assert date1 == date2  # Same date

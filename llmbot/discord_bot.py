@@ -4,14 +4,8 @@ import asyncio
 import logging
 import re
 from datetime import UTC, datetime
-from zoneinfo import ZoneInfo
-
-_LOCAL_TZ = ZoneInfo("America/Chicago")
-
-
-def _now_local_str() -> str:
-    return datetime.now(_LOCAL_TZ).strftime("%A, %Y-%m-%d %H:%M %Z")
 from typing import TYPE_CHECKING, Any
+from zoneinfo import ZoneInfo
 
 import discord  # type: ignore[import-not-found]
 from discord.ext import commands  # type: ignore[import-not-found]
@@ -29,6 +23,13 @@ from .tools import LOOP_EXECUTION_TOOLS, chat_with_tools, set_tool_config
 if TYPE_CHECKING:
     from .backends import LLMBackend
     from .memory import MemoryStore
+
+_LOCAL_TZ = ZoneInfo("America/Chicago")
+
+
+def _now_local_str() -> str:
+    return datetime.now(_LOCAL_TZ).strftime("%A, %Y-%m-%d %H:%M %Z")
+
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -384,22 +385,27 @@ class LLMBot(commands.Bot):
 
             loop_system = f"{loop['prompt']}\n\nCurrent date and time (authoritative — trust this): {_now_local_str()}"
 
-            def _run_loop() -> tuple[str, list[dict[str, Any]]]:
+            def _run_loop() -> tuple[str, list[dict[str, Any]], list[dict[str, Any]]]:
                 set_current_loop(loop)
                 try:
-                    text, conv, _tl = chat_with_tools(
+                    text, conv, tl = chat_with_tools(
                         [{"role": "user", "content": "Run your scheduled task now."}],
                         self.backend,
                         loop_system,
                         model=loop["model"] or None,
                         tools=LOOP_EXECUTION_TOOLS,
                     )
-                    return text, conv
+                    return text, conv, tl
                 finally:
                     clear_current_loop()
 
             event_loop = asyncio.get_event_loop()
-            response_text, _ = await event_loop.run_in_executor(None, _run_loop)
+            response_text, _, tool_log = await event_loop.run_in_executor(
+                None, _run_loop
+            )
+            response_text = self._append_tool_log_link(
+                loop["output_channel"], response_text, tool_log
+            )
 
             stripped = response_text.strip()
             if not stripped or stripped.upper() == "SKIP":
