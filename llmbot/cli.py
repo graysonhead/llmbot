@@ -277,7 +277,7 @@ def discord(  # noqa: C901, PLR0912, PLR0913, PLR0915
     if memory_store is None:
         webui_url = None
     elif webui_url is not None:
-        pass  # use the override as-is
+        webui_url = webui_url.rstrip("/")
     elif not no_webui:
         webui_url = f"http://{webui_host}:{webui_port}"
     else:
