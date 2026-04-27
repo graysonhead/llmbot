@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from datetime import UTC, datetime
@@ -19,8 +20,10 @@ from fastapi.staticfiles import StaticFiles  # type: ignore[import-not-found]
 from fastapi.templating import Jinja2Templates  # type: ignore[import-not-found]
 
 from .loop_tools import compute_next_run, is_valid_frequency
+from .memory import parse_consolidation_response
 
 if TYPE_CHECKING:
+    from .backends import LLMBackend
     from .memory import MemoryStore
 
 logger = logging.getLogger(__name__)
@@ -293,9 +296,10 @@ def _loop_router(  # noqa: C901
 # ------------------------------------------------------------------
 
 
-def _channel_router(
+def _channel_router(  # noqa: C901
     memory_store: MemoryStore,
     templates: Jinja2Templates,
+    backend: LLMBackend | None = None,
 ) -> APIRouter:
     """Build and return the /channels API router."""
     router = APIRouter(prefix="/channels")
@@ -324,8 +328,64 @@ def _channel_router(
                 "summary": summary or "",
                 "history": history,
                 "summary_history": summary_history,
+                "can_consolidate": backend is not None,
             },
         )
+
+    @router.post("/{channel_id}/consolidate", response_model=None)
+    async def channel_consolidate(channel_id: int) -> RedirectResponse | HTMLResponse:
+        """Run immediate memory consolidation for a channel."""
+        if backend is None:
+            return HTMLResponse("No LLM backend configured", status_code=503)
+        existing_summary = memory_store.get_summary(channel_id) or ""
+        history = memory_store.get_raw_history(channel_id)
+        if not history and not existing_summary:
+            return RedirectResponse(f"/channels/{channel_id}", status_code=303)
+        history_text = "\n".join(f"{msg['role']}: {msg['content']}" for msg in history)
+        consolidation_prompt = (
+            f"Current summary:\n{existing_summary or '(none)'}\n\n"
+            f"Recent messages:\n{history_text}\n\n"
+            "Review the above. Output a JSON object with exactly two keys:\n"
+            '1. "summary": updated running summary — preserve important facts, '
+            "decisions, ongoing tasks, and user preferences. Be concise.\n"
+            '2. "memories": list of objects with keys user_id (int Discord snowflake), '
+            "content (str), tags (list[str]), category "
+            "(one of: fact, preference, task, note, workflow) — "
+            "only include genuinely useful long-term facts.\n\n"
+            "Output only the JSON object, no other text."
+        )
+
+        def _run() -> None:
+            response = backend.api_chat(
+                [{"role": "user", "content": consolidation_prompt}],
+                "You are a memory consolidation assistant. Output only valid JSON.",
+            )
+            raw_text = backend.extract_text(response)
+            parsed = parse_consolidation_response(raw_text)
+            memory_store.save_summary(channel_id, existing_summary, parsed["summary"])
+            valid_memories = [
+                m
+                for m in parsed.get("memories", [])
+                if isinstance(m.get("user_id"), int) and m.get("content")
+            ]
+            if valid_memories:
+                memory_store.save_memories(valid_memories)
+
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, _run)
+        return RedirectResponse(f"/channels/{channel_id}", status_code=303)
+
+    @router.post("/{channel_id}/clear-summary")
+    async def channel_clear_summary(channel_id: int) -> RedirectResponse:
+        """Clear the current summary for a channel."""
+        memory_store.clear_summary(channel_id)
+        return RedirectResponse(f"/channels/{channel_id}", status_code=303)
+
+    @router.post("/{channel_id}/clear-history")
+    async def channel_clear_history(channel_id: int) -> RedirectResponse:
+        """Clear recent messages for a channel."""
+        memory_store.clear_raw_history(channel_id)
+        return RedirectResponse(f"/channels/{channel_id}", status_code=303)
 
     return router
 
@@ -361,7 +421,7 @@ def _tool_call_log_router(
 # ------------------------------------------------------------------
 
 
-def create_app(memory_store: MemoryStore) -> FastAPI:
+def create_app(memory_store: MemoryStore, backend: LLMBackend | None = None) -> FastAPI:
     """Create and configure the FastAPI application.
 
     Args:
@@ -406,7 +466,7 @@ def create_app(memory_store: MemoryStore) -> FastAPI:
 
     app.include_router(_memory_router(memory_store, templates))
     app.include_router(_loop_router(memory_store, templates))
-    app.include_router(_channel_router(memory_store, templates))
+    app.include_router(_channel_router(memory_store, templates, backend))
     app.include_router(_tool_call_log_router(memory_store, templates))
 
     return app

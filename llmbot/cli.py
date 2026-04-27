@@ -304,7 +304,7 @@ def discord(  # noqa: C901, PLR0912, PLR0913, PLR0915
                 )
             asyncio.run(bot_coro)
         else:
-            webui_app = create_app(memory_store)
+            webui_app = create_app(memory_store, backend=llm_backend)
             config = uvicorn.Config(
                 webui_app, host=webui_host, port=webui_port, log_level="warning"
             )

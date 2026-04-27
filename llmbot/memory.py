@@ -334,6 +334,22 @@ class MemoryStore:
         except json.JSONDecodeError:
             return []
 
+    def clear_summary(self, channel_id: int) -> None:
+        """Clear the current summary text for a channel."""
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE conversation_summaries SET summary = '', last_updated = datetime('now') WHERE channel_id = ?",
+                (channel_id,),
+            )
+
+    def clear_raw_history(self, channel_id: int) -> None:
+        """Delete stored recent messages for a channel."""
+        with self._connect() as conn:
+            conn.execute(
+                "DELETE FROM raw_history WHERE channel_id = ?",
+                (channel_id,),
+            )
+
     # ------------------------------------------------------------------
     # Tool call logs
     # ------------------------------------------------------------------

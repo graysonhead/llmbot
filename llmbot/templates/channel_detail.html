@@ -4,6 +4,19 @@
 <div class="d-flex align-items-center mb-3">
   <a href="/channels" class="btn btn-sm btn-outline-secondary me-3">&larr; Channels</a>
   <h1 class="mb-0">Channel {{ channel_id }}</h1>
+  <div class="ms-auto d-flex gap-2">
+    {% if can_consolidate %}
+    <form method="post" action="/channels/{{ channel_id }}/consolidate">
+      <button type="submit" class="btn btn-sm btn-primary">Summarize &amp; Memorize Now</button>
+    </form>
+    {% endif %}
+    <form method="post" action="/channels/{{ channel_id }}/clear-summary">
+      <button type="submit" class="btn btn-sm btn-outline-warning">Clear Summary</button>
+    </form>
+    <form method="post" action="/channels/{{ channel_id }}/clear-history">
+      <button type="submit" class="btn btn-sm btn-outline-danger">Clear Recent Messages</button>
+    </form>
+  </div>
 </div>
 
 <h2 class="h5">Current Summary</h2>
