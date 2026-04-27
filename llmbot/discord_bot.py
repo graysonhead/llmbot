@@ -130,8 +130,10 @@ class LLMBot(commands.Bot):
             "a tool to look it up. Make sure you are adding future events in the current year unless "
             "otherwise specified. And always ask for clarification if it isn't exactly clear "
             "when things are supposed to be scheduled. "
-            "IMPORTANT: You are incapable of creating, modifying, or deleting calendar entries or tasks without calling the appropriate tool. "
-            "You MUST call the tool first. If you lack information needed to call the tool, ask the user — never claim an action was performed without a successful tool call."
+            "CRITICAL: You CANNOT perform any real-world action — creating, modifying, deleting, or sending anything — without calling the appropriate tool. "
+            "Saying you did something is NOT the same as doing it. If you claim an action was completed without a successful tool call, you are lying to the user. "
+            "You MUST call the tool first. If you lack the information needed to call the tool, ask the user. "
+            "Never describe, summarize, or confirm an action as done unless a tool call succeeded and returned a result."
         )
 
         # Append additional system message if provided
@@ -542,11 +544,11 @@ class LLMBot(commands.Bot):
                         effective_system,
                         model=model_to_use,
                     )
-                    response_text = self._append_tool_log_link(
-                        channel_id, response_text, tool_log
-                    )
                     self._add_to_history(
                         channel_id, "Assistant", response_text, is_bot=True
+                    )
+                    response_text = self._append_tool_log_link(
+                        channel_id, response_text, tool_log
                     )
                 else:
                     result = self.backend.api_chat(
