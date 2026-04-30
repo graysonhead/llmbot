@@ -537,12 +537,19 @@ class LLMBot(commands.Bot):
                 messages = list(self.conversation_history.get(channel_id, []))
 
                 # Use backend with or without tools
+                event_loop = asyncio.get_event_loop()
                 if self.enable_mcp_tools:
-                    response_text, full_conversation, tool_log = chat_with_tools(
-                        messages,
-                        self.backend,
-                        effective_system,
-                        model=model_to_use,
+                    _messages = messages
+                    _system = effective_system
+                    _model = model_to_use
+                    response_text, full_conversation, tool_log = await event_loop.run_in_executor(
+                        None,
+                        lambda: chat_with_tools(
+                            _messages,
+                            self.backend,
+                            _system,
+                            model=_model,
+                        ),
                     )
                     self._add_to_history(
                         channel_id, "Assistant", response_text, is_bot=True
@@ -551,8 +558,14 @@ class LLMBot(commands.Bot):
                         channel_id, response_text, tool_log
                     )
                 else:
-                    result = self.backend.api_chat(
-                        messages, effective_system, model=model_to_use
+                    _messages = messages
+                    _system = effective_system
+                    _model = model_to_use
+                    result = await event_loop.run_in_executor(
+                        None,
+                        lambda: self.backend.api_chat(
+                            _messages, _system, model=_model
+                        ),
                     )
                     response_text = self.backend.extract_text(result)
                     self._add_to_history(
